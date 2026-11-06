@@ -1,0 +1,10 @@
+[Unit]
+Description=Camper sound watch: smoke/CO alarm + barking from the Brio mic (YAMNet) -> Home Assistant
+After=voice-satellite.service
+[Service]
+WorkingDirectory=/home/morris/camper_voice
+ExecStart=/home/morris/camper_voice/venv-sound/bin/python /home/morris/camper_voice/sound_watch.py
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target

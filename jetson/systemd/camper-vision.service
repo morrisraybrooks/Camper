@@ -1,0 +1,10 @@
+[Unit]
+Description=Camper vision: webcam presence + hand gestures -> Home Assistant (CPU)
+[Service]
+WorkingDirectory=/home/morris/camper_vision
+ExecStart=/home/morris/camper_vision/venv/bin/python camper_vision.py
+Environment=GLOG_minloglevel=2 TF_CPP_MIN_LOG_LEVEL=2
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target

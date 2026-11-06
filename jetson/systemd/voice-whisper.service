@@ -1,0 +1,9 @@
+[Unit]
+Description=Camper voice: faster-whisper STT on CPU (Wyoming, 0.0.0.0:10300)
+[Service]
+WorkingDirectory=/home/morris/camper_voice
+ExecStart=/home/morris/camper_voice/venv-faster-whisper/bin/python -m wyoming_faster_whisper --uri tcp://0.0.0.0:10300 --model base-int8 --language en --device cpu --compute-type int8 --cpu-threads 4 --data-dir data --download-dir data --initial-prompt "Camper commands: find my phone, where is my phone, TV, ceiling fan, coffee, awning, water pump, water heater, thermostat, power strip plug, Daisy, Nadine."
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target

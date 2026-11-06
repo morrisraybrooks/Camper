@@ -1,0 +1,32 @@
+# ============================================
+# Camper Dark — minimal fixed-dark theme
+# No "modes:" key on purpose: a theme with no light/dark
+# split applies its colors unconditionally, ignoring the
+# device's system light/dark preference. This exists so the
+# Camper dashboard reads the same on the HA Companion App
+# (which otherwise follows the phone's system theme) as it
+# does everywhere else it's been tuned and tested.
+# ============================================
+Camper Dark:
+  primary-background-color: "#0c0e14"
+  secondary-background-color: "#1a1c24"
+  card-background-color: "#1a1c24"
+  ha-card-background: "#1a1c24"
+  primary-text-color: "#f4f4f6"
+  secondary-text-color: "#c7c9d4"
+  disabled-text-color: "#6b6d78"
+  primary-color: "#f97316"
+  accent-color: "#38bdf8"
+  divider-color: "#24272f"
+  app-header-background-color: "#0c0e14"
+  app-header-text-color: "#f4f4f6"
+  sidebar-background-color: "#0c0e14"
+  sidebar-text-color: "#f4f4f6"
+  sidebar-icon-color: "#c7c9d4"
+  sidebar-selected-icon-color: "#38bdf8"
+  sidebar-selected-text-color: "#38bdf8"
+  label-badge-background-color: "#1a1c24"
+  label-badge-text-color: "#f4f4f6"
+  mdc-theme-primary: "#f97316"
+  table-row-background-color: "#1a1c24"
+  table-row-alternative-background-color: "#201f28"

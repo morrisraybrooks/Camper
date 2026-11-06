@@ -1,0 +1,14 @@
+{# Wireless leak probes (2026-10-17). A probe is any moisture binary_sensor with "leak"
+   in its entity id or name - the Aqara probes pair as ..._wleak_... - so new probes count
+   as soon as they're paired. The awning's rain sensor has no "leak" in it and is ignored.
+   Returns a JSON list of the wet probes' names. #}
+{% macro wet_leak_probes() -%}
+{%- set ns = namespace(wet=[]) -%}
+{%- for s in states.binary_sensor
+      if s.attributes.device_class == 'moisture' and s.state == 'on'
+      and s.entity_id != 'binary_sensor.camper_water_leak'
+      and ('leak' in s.entity_id or 'leak' in (s.name | lower)) -%}
+{%- set ns.wet = ns.wet + [s.name] -%}
+{%- endfor -%}
+{{ ns.wet | to_json }}
+{%- endmacro %}

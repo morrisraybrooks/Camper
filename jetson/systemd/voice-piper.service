@@ -1,0 +1,9 @@
+[Unit]
+Description=Camper voice: Piper TTS (Wyoming, 0.0.0.0:10200)
+[Service]
+WorkingDirectory=/home/morris/camper_voice
+ExecStart=/home/morris/camper_voice/venv-piper/bin/python -m wyoming_piper --uri tcp://0.0.0.0:10200 --voice en_US-ryan_deep-medium --data-dir data --download-dir data
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target

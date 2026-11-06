@@ -1,0 +1,504 @@
+substitutions:
+  device_name: camper-wall-panel
+  friendly_name: "Camper Wall Panel"
+
+  # ---- CALIBRATION: fill these in after hardware is wired ----
+  # Each tank sender is read as a voltage on an ADC pin through a fixed
+  # voltage divider (sender resistance -> voltage). Fill in the two
+  # reference points below by measuring actual voltage at empty and at
+  # full for each tank sender you install (senders vary a lot brand to
+  # brand, so don't trust a factory curve).
+  fresh_v_empty: "0.20"
+  fresh_v_full: "3.00"
+  grey_v_empty: "0.20"
+  grey_v_full: "3.00"
+  black_v_empty: "0.20"
+  black_v_full: "3.00"
+
+  # Voltage divider ratio for battery voltage sense line.
+  # If using e.g. 100k top / 10k bottom resistor divider, ratio = (100+10)/10 = 11.0
+  # Measure actual battery voltage with a multimeter and adjust this
+  # multiplier until the sensor reading matches.
+  battery_divider_ratio: "11.0"
+
+  # Battery bank capacity in amp-hours, used for SOC % calculation.
+  # Set this to the TOTAL of the new bank: two 100 Ah batteries in
+  # parallel = 200.0 (in series it would still be 100 Ah, but at 24 V).
+  battery_capacity_ah: "100.0"
+
+  # Shunt resistance in ohms for the INA226 current sensor.
+  # 300A/75mV shunt = 0.00025 (sized for an inverter: 1000 W at 12 V is
+  # about 90 A). For a 50A/75mV shunt use 0.0015 and "50.0".
+  shunt_resistance: "0.00025"
+  max_current_a: "300.0"
+
+  # Current direction. Should read POSITIVE while charging and NEGATIVE
+  # while running loads. If it's backwards, change this to "-1.0".
+  current_sign: "1.0"
+
+  # "Battery full" detection: when the voltage is at least this high and
+  # the charge current has tapered below battery_full_current_a for 5
+  # minutes, the State of Charge resets to 100%.
+  # Typical: LiFePO4 14.2 V / 2 A; lead-acid/AGM 14.2 V / 1 A.
+  battery_full_voltage: "14.2"
+  battery_full_current_a: "2.0"
+
+  # The DC solid-state relays (OONO F-1049, 2026-10-19) switch ON when the
+  # pin goes HIGH, so leave this "false". Only an active-low relay board
+  # would need "true".
+  relay_active_low: "false"
+
+  # 4 DC solid-state relays, one per output (2026-10-19, were mechanical):
+  #   CH1 GPIO25  Water heater gas
+  #   CH2 GPIO26  Fresh water pump
+  #   CH3 GPIO27  Water main shutoff valve (city water inlet)
+  #   CH4 GPIO13  Tank dump valve
+  # GPIO14 and the strapping pins (0, 2, 5, 12, 15) are avoided - they
+  # twitch at boot and could click a valve relay.
+
+  # The dump valve closes by itself after this long, in case it's
+  # forgotten open (a full black tank takes 2-3 minutes to drain).
+  dump_valve_max_open: "15min"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret camper_wall_panel_api_key
+  # Leak shutoff (2026-10-17). The leak sensors are wireless Aqara probes in
+  # Home Assistant, so HA calls these:
+  #   esphome.camper_wall_panel_leak_shutoff  (where, heater_off)
+  #   esphome.camper_wall_panel_leak_reset    - via script.camper_leak_reset,
+  #                                             which first checks every probe is dry
+  actions:
+    - action: leak_shutoff
+      variables:
+        where: string
+        heater_off: bool
+      then:
+        - script.execute:
+            id: leak_shutoff
+            where: !lambda 'return where;'
+            heater_off: !lambda 'return heater_off;'
+    - action: leak_reset
+      then:
+        - globals.set:
+            id: leak_lockout
+            value: 'false'
+        - switch.turn_off: main_valve_relay
+        # Save now, not at the next 10-minute flash write
+        - lambda: 'global_preferences->sync();'
+        - logger.log: "Leak lockout cleared - water main valve open"
+
+ota:
+  platform: esphome
+  password: !secret camper_wall_panel_ota_password
+
+logger:
+
+# Battery SOC is saved to flash; write at most every 10 minutes so the
+# flash doesn't wear out from constant small changes.
+preferences:
+  flash_write_interval: 10min
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
+
+# ============================================
+# Water tank levels
+# Wiring assumption: resistive/capacitive level sender -> voltage divider
+# -> ADC pin. Use ADC1 pins (32-39) only; ADC2 pins conflict with WiFi.
+# ============================================
+sensor:
+  - platform: adc
+    pin: GPIO34
+    name: "${friendly_name} Fresh Tank Raw"
+    id: fresh_tank_raw
+    update_interval: 3s
+    attenuation: 12db
+    filters:
+      # 10 readings averaged, one level every 30 s
+      - sliding_window_moving_average:
+          window_size: 10
+          send_every: 10
+      - calibrate_linear:
+          - ${fresh_v_empty} -> 0.0
+          - ${fresh_v_full} -> 100.0
+      - clamp:
+          min_value: 0.0
+          max_value: 100.0
+    internal: true
+
+  - platform: copy
+    source_id: fresh_tank_raw
+    name: "${friendly_name} Fresh Tank Level"
+    unit_of_measurement: "%"
+    device_class: ""
+    state_class: measurement
+
+  - platform: adc
+    pin: GPIO35
+    name: "${friendly_name} Grey Tank Raw"
+    id: grey_tank_raw
+    update_interval: 3s
+    attenuation: 12db
+    filters:
+      # 10 readings averaged, one level every 30 s
+      - sliding_window_moving_average:
+          window_size: 10
+          send_every: 10
+      - calibrate_linear:
+          - ${grey_v_empty} -> 0.0
+          - ${grey_v_full} -> 100.0
+      - clamp:
+          min_value: 0.0
+          max_value: 100.0
+    internal: true
+
+  - platform: copy
+    source_id: grey_tank_raw
+    name: "${friendly_name} Grey Tank Level"
+    unit_of_measurement: "%"
+    device_class: ""
+    state_class: measurement
+
+  - platform: adc
+    pin: GPIO32
+    name: "${friendly_name} Black Tank Raw"
+    id: black_tank_raw
+    update_interval: 3s
+    attenuation: 12db
+    filters:
+      # 10 readings averaged, one level every 30 s
+      - sliding_window_moving_average:
+          window_size: 10
+          send_every: 10
+      - calibrate_linear:
+          - ${black_v_empty} -> 0.0
+          - ${black_v_full} -> 100.0
+      - clamp:
+          min_value: 0.0
+          max_value: 100.0
+    internal: true
+
+  - platform: copy
+    source_id: black_tank_raw
+    name: "${friendly_name} Black Tank Level"
+    unit_of_measurement: "%"
+    device_class: ""
+    state_class: measurement
+
+  # ============================================
+  # Battery voltage + current -> SOC via coulomb counting
+  # Wiring: voltage divider from battery+ to GPIO33 (ADC), INA226 current
+  # shunt in-line with the main battery negative or positive feed.
+  # ============================================
+  - platform: adc
+    pin: GPIO33
+    name: "${friendly_name} Battery Voltage Raw"
+    id: battery_voltage_raw
+    update_interval: 10s
+    attenuation: 12db
+    filters:
+      - multiply: ${battery_divider_ratio}
+      - sliding_window_moving_average:
+          window_size: 8
+          send_every: 4
+    internal: true
+
+  - platform: copy
+    source_id: battery_voltage_raw
+    name: "${friendly_name} Battery Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+
+  - platform: ina226
+    address: 0x40
+    shunt_resistance: ${shunt_resistance}
+    max_current: ${max_current_a}A
+    current:
+      name: "${friendly_name} Battery Current"
+      id: battery_current
+      unit_of_measurement: "A"
+      state_class: measurement
+      filters:
+        - multiply: ${current_sign}
+    bus_voltage:
+      # More accurate than the ADC divider; used for "battery full" detection
+      name: "${friendly_name} Battery Voltage (INA226)"
+      id: battery_bus_v
+      state_class: measurement
+    update_interval: 10s
+
+  # Power = voltage x current, so it has a sign like the current (+ charging,
+  # - using). The INA226's own power reading is always positive.
+  - platform: template
+    name: "${friendly_name} Battery Power"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: |-
+      float v = id(battery_bus_v).state, a = id(battery_current).state;
+      if (isnan(v) || isnan(a)) return {};
+      return v * a;
+
+  # Coulomb counting: `integration` reports a running CUMULATIVE total
+  # (Ah moved since boot), not a per-tick delta - the SOC lambda below
+  # tracks the previous total itself and only applies the difference each
+  # cycle. This is a simple running estimate, not a true fuel gauge - it
+  # will drift over days/weeks and benefits from being "reset" to 100%
+  # whenever you know the battery is actually full (e.g. via an
+  # automation when charge current drops near 0 at high voltage).
+  - platform: integration
+    sensor: battery_current
+    name: "${friendly_name} Battery Ah Cumulative"
+    id: battery_ah_cumulative
+    unit_of_measurement: "Ah"
+    time_unit: h
+    internal: true
+
+  - platform: template
+    name: "${friendly_name} Battery State of Charge"
+    id: battery_soc
+    unit_of_measurement: "%"
+    state_class: measurement
+    update_interval: 10s
+    lambda: |-
+      // SOC is saved to flash (battery_soc_saved), so a reboot or power
+      // blip keeps the last value instead of jumping back to 100%.
+      static float last_total_ah = NAN;
+      float total_ah = id(battery_ah_cumulative).state;
+      if (!isnan(total_ah)) {
+        if (!isnan(last_total_ah)) {
+          float delta_ah = total_ah - last_total_ah;
+          id(battery_soc_saved) += (delta_ah / ${battery_capacity_ah}) * 100.0;
+        }
+        last_total_ah = total_ah;
+      }
+      if (id(battery_soc_saved) > 100.0) id(battery_soc_saved) = 100.0;
+      if (id(battery_soc_saved) < 0.0) id(battery_soc_saved) = 0.0;
+      return id(battery_soc_saved);
+
+globals:
+  - id: battery_soc_saved
+    type: float
+    restore_value: true
+    initial_value: '100.0'
+
+  # Set when a leak shutoff runs. Saved to flash so a reboot or power blip
+  # doesn't turn the water back on. Cleared only by HA's Leak Reset.
+  - id: leak_lockout
+    type: bool
+    restore_value: true
+    initial_value: 'false'
+
+# Reset SOC to 100% once the battery is actually full (charger has
+# tapered off at full voltage for 5 minutes).
+interval:
+  - interval: 10s
+    then:
+      - lambda: |-
+          static int full_ticks = 0;
+          float v = id(battery_bus_v).state;
+          if (isnan(v)) v = id(battery_voltage_raw).state;
+          float a = id(battery_current).state;
+          if (!isnan(v) && !isnan(a) && v >= ${battery_full_voltage} &&
+              a >= 0 && a < ${battery_full_current_a}) {
+            if (++full_ticks >= 30 && id(battery_soc_saved) < 100.0) {
+              ESP_LOGI("battery", "Full detected - SOC reset to 100%%");
+              id(battery_soc_saved) = 100.0;
+            }
+          } else {
+            full_ticks = 0;
+          }
+
+button:
+  - platform: template
+    name: "${friendly_name} Battery Set Full"
+    icon: mdi:battery-check
+    entity_category: config
+    on_press:
+      - lambda: 'id(battery_soc_saved) = 100.0;'
+
+# Leak lockout - on while the water is shut off after a leak (2026-10-17).
+binary_sensor:
+  - platform: template
+    name: "${friendly_name} Leak Lockout"
+    icon: mdi:water-off
+    device_class: problem
+    lambda: 'return id(leak_lockout);'
+
+# Leak shutoff sequence, called by Home Assistant when an Aqara leak probe
+# gets wet: pump off, water main closed, and the water heater burner off
+# too when the leak is at the water heater (don't fire a tank that may be
+# draining). Runs here so it finishes even if HA drops off mid-way, and
+# stays shut off (saved to flash) until HA's Leak Reset.
+script:
+  - id: leak_shutoff
+    mode: queued
+    parameters:
+      where: string
+      heater_off: bool
+    then:
+      - globals.set:
+          id: leak_lockout
+          value: 'true'
+      - switch.turn_off: water_pump
+      - switch.turn_on: main_valve_relay
+      - if:
+          condition:
+            lambda: 'return heater_off;'
+          then:
+            - switch.turn_off: water_heater_gas
+      # Save the lockout and the closed valve now: with the 10-minute flash
+      # interval, a power blip right after a leak would otherwise reboot
+      # with the water main open.
+      - lambda: 'global_preferences->sync();'
+      - logger.log:
+          level: WARN
+          format: "LEAK (%s) - pump off, water main closed"
+          args: ['where.c_str()']
+
+  # Closes the dump valve after dump_valve_max_open. Restarted on each open.
+  - id: dump_valve_autoclose
+    mode: restart
+    then:
+      - delay: ${dump_valve_max_open}
+      - switch.turn_off: dump_valve_relay
+      - logger.log: "Dump valve auto-closed after ${dump_valve_max_open}"
+
+# ============================================
+# Water heater gas ignition control (Suburban SW6DE, gas side only -
+# electric element is physically disconnected and not controlled here).
+# The Suburban DSI control board lights the burner whenever it sees 12V
+# on its switched input - that's literally all the OEM wall switch does.
+# This relay just closes that same 12V connection; wire it in place of
+# (or in parallel with) the OEM switch. No temp probe or fault contacts
+# are wired, so there's no feedback here - if the water heater doesn't
+# light, check it at the unit itself.
+# ============================================
+switch:
+  - platform: gpio
+    pin:
+      number: GPIO25
+      inverted: ${relay_active_low}
+    id: water_heater_gas
+    name: "${friendly_name} Water Heater Gas"
+    icon: mdi:water-boiler
+    restore_mode: ALWAYS_OFF
+
+  # ============================================
+  # Fresh water pump relay - same panel, direct 12V switching (mirrors
+  # the OEM pump switch). Defaults off on boot/power loss so it never
+  # runs unattended after a reset.
+  # ============================================
+  - platform: gpio
+    pin:
+      number: GPIO26
+      inverted: ${relay_active_low}
+    id: water_pump_relay
+    restore_mode: ALWAYS_OFF
+    internal: true
+  # The switch HA sees. It refuses to turn on during a leak lockout, so the
+  # relay never even blips on.
+  - platform: template
+    id: water_pump
+    name: "${friendly_name} Water Pump"
+    icon: mdi:water-pump
+    lambda: 'return id(water_pump_relay).state;'
+    turn_on_action:
+      - if:
+          condition:
+            lambda: 'return id(leak_lockout);'
+          then:
+            - logger.log:
+                level: WARN
+                format: "Pump blocked - leak lockout (Leak Reset in HA)"
+          else:
+            - switch.turn_on: water_pump_relay
+    turn_off_action:
+      - switch.turn_off: water_pump_relay
+
+  # ============================================
+  # Valve relays (2026-10-17). Both are written for a 3-wire 12 V
+  # motorized valve (+12 V, ground, and a control wire; the main valve
+  # closes and the dump valve opens while the control wire is powered).
+  # A 2-wire valve that opens/closes by reversing polarity (e.g. Valterra
+  # Drain Master) can't run from one SSR - it needs its own H-bridge or controller.
+  # Use the valve entities below; these raw relays are internal.
+  # ============================================
+  # Water main shutoff on the city water inlet. The SSR has no NC side, so
+  # use a valve where 12 V on the control wire = CLOSED: relay OFF =
+  # water ON. A dead or unplugged panel leaves the water on, like a
+  # normal house. Relay state is restored after a reboot, so a leak
+  # shutoff stays shut.
+  - platform: gpio
+    id: main_valve_relay
+    pin:
+      number: GPIO27
+      inverted: ${relay_active_low}
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: true
+
+  # Tank dump valve. Use a valve where 12 V on control = OPEN: relay
+  # ON = open. Always closes at boot and after dump_valve_max_open.
+  - platform: gpio
+    id: dump_valve_relay
+    pin:
+      number: GPIO13
+      inverted: ${relay_active_low}
+    restore_mode: ALWAYS_OFF
+    internal: true
+
+valve:
+  - platform: template
+    name: "${friendly_name} Water Main Valve"
+    icon: mdi:valve
+    device_class: water
+    lambda: 'return id(main_valve_relay).state ? VALVE_CLOSED : VALVE_OPEN;'
+    open_action:
+      - if:
+          condition:
+            lambda: 'return id(leak_lockout);'
+          then:
+            - logger.log:
+                level: WARN
+                format: "Water main stays closed - leak lockout (Leak Reset in HA)"
+          else:
+            - switch.turn_off: main_valve_relay
+    close_action:
+      - switch.turn_on: main_valve_relay
+
+  # Never opened automatically - only by a person, with the sewer hose on.
+  - platform: template
+    name: "${friendly_name} Tank Dump Valve"
+    icon: mdi:valve
+    device_class: water
+    lambda: 'return id(dump_valve_relay).state ? VALVE_OPEN : VALVE_CLOSED;'
+    open_action:
+      - switch.turn_on: dump_valve_relay
+      - script.execute: dump_valve_autoclose
+    close_action:
+      - script.stop: dump_valve_autoclose
+      - switch.turn_off: dump_valve_relay

@@ -1,0 +1,33 @@
+{# Recurring camper care tasks (Daisy + upkeep). Generated from tasks.py - 2026-10-05.
+   Each task's last-done date lives in input_datetime.task_<id>.
+   Glade refills (added 2026-10-10): "every" follows the holder's spray timer -
+   Glade rates a refill ~60 days at 36 min; 18 and 9 min are scaled from that.
+   Dump black & grey tanks (added 2026-10-17): weekly, 7 days after the last dump.
+   Clean dehumidifier filter (added 2026-10-17): every 14 days, Midea's advice for the air filter.
+   Glade batteries (2 AA each): every 180 days - Glade gives no figure, ~every 3rd refill. #}
+{% macro task_list() %}[{"id": "daisy_heartworm", "name": "Heartworm pill", "group": "Daisy", "every": 30, "icon": "mdi:pill"}, {"id": "daisy_flea_tick", "name": "Flea & tick dose", "group": "Daisy", "every": 30, "icon": "mdi:spray"}, {"id": "daisy_vet", "name": "Vet checkup & shots", "group": "Daisy", "every": 365, "icon": "mdi:stethoscope"}, {"id": "dump_tanks", "name": "Dump black & grey tanks", "group": "Upkeep", "every": 7, "icon": "mdi:toilet"}, {"id": "ac_filter", "name": "Clean A/C filter", "group": "Upkeep", "every": 30, "icon": "mdi:air-filter"}, {"id": "dehum_filter", "name": "Clean dehumidifier filter", "group": "Upkeep", "every": 14, "icon": "mdi:air-humidifier"}, {"id": "smoke_co_test", "name": "Test smoke & CO alarm", "group": "Upkeep", "every": 30, "icon": "mdi:smoke-detector-variant"}, {"id": "tire_pressure", "name": "Check tire pressure", "group": "Upkeep", "every": 30, "icon": "mdi:car-tire-alert"}, {"id": "water_filter", "name": "Change water filter", "group": "Upkeep", "every": 90, "icon": "mdi:water-check"}, {"id": "roof_seals", "name": "Inspect roof & seals", "group": "Upkeep", "every": 90, "icon": "mdi:home-roof"}, {"id": "sanitize_tank", "name": "Sanitize fresh water tank", "group": "Upkeep", "every": 180, "icon": "mdi:water-sync"}, {"id": "glade_1", "name": "Refill Glade - Bathroom", "group": "Upkeep", "every": 60, "timer": "input_select.camper_glade_1_timer", "icon": "mdi:spray"}, {"id": "glade_2", "name": "Refill Glade - Kitchen", "group": "Upkeep", "every": 60, "timer": "input_select.camper_glade_2_timer", "icon": "mdi:spray"}, {"id": "glade_1_batt", "name": "Glade batteries - Bathroom", "group": "Upkeep", "every": 180, "icon": "mdi:battery-sync"}, {"id": "glade_2_batt", "name": "Glade batteries - Kitchen", "group": "Upkeep", "every": 180, "icon": "mdi:battery-sync"}]{% endmacro %}
+
+{# JSON list of tasks (optionally one group) with days_left / due date, soonest first #}
+{% macro task_status(group='') -%}
+{%- set ns = namespace(out=[]) -%}
+{%- for t in task_list() | from_json -%}
+{%- if not group or t.group == group -%}
+{%- set last = states('input_datetime.task_' ~ t.id) -%}
+{%- if last not in ['unknown', 'unavailable', ''] -%}
+{%- set every = {'Every 9 min': 15, 'Every 18 min': 30, 'Every 36 min': 60}.get(states(t.timer), t.every) if t.timer is defined else t.every -%}
+{%- set due = (as_datetime(last).date() + timedelta(days=every)) -%}
+{%- set left = (due - now().date()).days -%}
+{%- set ns.out = ns.out + [dict(t, every=every, due=due.isoformat(), days_left=left, last=last)] -%}
+{%- endif -%}
+{%- endif -%}
+{%- endfor -%}
+{{ ns.out | sort(attribute='days_left') | to_json }}
+{%- endmacro %}
+
+{# Short human text for days left #}
+{% macro due_text(days) -%}
+{%- if days < 0 -%}Overdue {{ -days }} day{{ 's' if days < -1 }}
+{%- elif days == 0 -%}Due today
+{%- elif days == 1 -%}Due tomorrow
+{%- else -%}Due in {{ days }} days{%- endif -%}
+{%- endmacro %}

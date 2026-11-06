@@ -1,0 +1,28 @@
+# ============================================
+# Camper Beach — light pastel fixed theme
+# Companion to Camper Dark: same "no modes: key" reasoning
+# (ignores device light/dark preference, always applies).
+# ============================================
+Camper Beach:
+  primary-background-color: "#FBF3E7"
+  secondary-background-color: "#FFFFFF"
+  card-background-color: "#FFFFFF"
+  ha-card-background: "#FFFFFF"
+  primary-text-color: "#2B2A28"
+  secondary-text-color: "#6B6558"
+  disabled-text-color: "#A39C8C"
+  primary-color: "#E8935A"
+  accent-color: "#4FA8D8"
+  divider-color: "#E3D9C7"
+  app-header-background-color: "#FBF3E7"
+  app-header-text-color: "#2B2A28"
+  sidebar-background-color: "#FBF3E7"
+  sidebar-text-color: "#2B2A28"
+  sidebar-icon-color: "#6B6558"
+  sidebar-selected-icon-color: "#4FA8D8"
+  sidebar-selected-text-color: "#4FA8D8"
+  label-badge-background-color: "#FFFFFF"
+  label-badge-text-color: "#2B2A28"
+  mdc-theme-primary: "#E8935A"
+  table-row-background-color: "#FFFFFF"
+  table-row-alternative-background-color: "#FBF3E7"

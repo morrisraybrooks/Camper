@@ -1,0 +1,16 @@
+[Unit]
+Description=Camper voice: Wyoming satellite (Brio mic -> HA Assist, 0.0.0.0:10700)
+Wants=voice-wakeword.service
+After=voice-wakeword.service pipewire-pulse.service
+[Service]
+WorkingDirectory=/home/morris/camper_voice
+ExecStart=/home/morris/camper_voice/venv-satellite/bin/python -m wyoming_satellite --name "Camper Jetson" --uri tcp://0.0.0.0:10700 --zeroconf-host 192.168.0.173 \
+  --mic-command "/usr/bin/python3 /home/morris/camper_voice/mic_tee.py" \
+  --mic-auto-gain 5 --mic-noise-suppression 2 \
+  --snd-command "paplay --raw --rate=22050 --channels=1 --format=s16le" --snd-command-rate 22050 \
+  --wake-uri tcp://127.0.0.1:10400 --wake-word-name hey_jarvis \
+  --awake-wav sounds/awake.wav --mic-no-mute-during-awake-wav --mic-seconds-to-mute-after-awake-wav 0 --done-wav sounds/done.wav
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target

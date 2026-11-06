@@ -1,0 +1,12 @@
+[Unit]
+Description=Camper music: VLC for Home Assistant (media_player.camper_stereo), telnet 0.0.0.0:4212
+After=wireplumber.service pipewire-pulse.service
+
+[Service]
+EnvironmentFile=/home/morris/.config/camper-music.env
+ExecStart=/usr/bin/cvlc --intf telnet --telnet-host 0.0.0.0 --telnet-port 4212 --telnet-password ${VLC_PASSWORD} --aout pulse --no-video --http-reconnect
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

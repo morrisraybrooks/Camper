@@ -1,0 +1,9 @@
+[Unit]
+Description=Camper voice: openWakeWord (Wyoming, 127.0.0.1:10400)
+[Service]
+WorkingDirectory=/home/morris/camper_voice
+ExecStart=/home/morris/camper_voice/venv-openwakeword/bin/python -m wyoming_openwakeword --uri tcp://127.0.0.1:10400 --preload-model hey_jarvis --preload-model ok_nabu
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target

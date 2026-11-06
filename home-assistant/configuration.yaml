@@ -1,0 +1,1296 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+  extra_module_url:
+    - /hacsfiles/lovelace-card-mod/card-mod.js
+
+# Lovelace UI Configuration (YAML Mode - file managed)
+lovelace:
+  resource_mode: yaml
+  resources:
+    - url: /hacsfiles/lovelace-mushroom/mushroom.js
+      type: module
+    - url: /hacsfiles/lovelace-card-mod/card-mod.js
+      type: module
+    - url: /hacsfiles/button-card/button-card.js
+      type: module
+    - url: /hacsfiles/stack-in-card/stack-in-card.js
+      type: module
+    # Home page indoor/outdoor temperature graph (2026-10-25)
+    - url: /hacsfiles/mini-graph-card/mini-graph-card-bundle.js
+      type: module
+  dashboards:
+    lovelace-camper:
+      mode: yaml
+      filename: dashboards/camper.yaml
+      title: "🚐 Camper"
+      icon: mdi:rv-truck
+      show_in_sidebar: true
+      require_admin: false
+    # Phone version (2026-10-18): generated from camper.yaml by
+    # dashboards/make_phone_dashboard.py - big tile grid instead of the badge bar.
+    lovelace-phone:
+      mode: yaml
+      filename: dashboards/camper_phone.yaml
+      title: "📱 Phone"
+      icon: mdi:cellphone
+      show_in_sidebar: true
+      require_admin: false
+
+sensor:
+  # 2016 Toyota Sequoia (5.7 V8, tows the camper) OBD-II (2026-10-17): ELM327 mini (Bluetooth)
+  # -> Torque Pro on Morris's Android phone -> uploads to /api/torque. Sensors appear as
+  # "Sequoia <PID>" after the first drive. "email" is just the matching key typed into
+  # Torque's "User email address" setting.
+  - platform: torque
+    email: vehicle@camper.local
+    name: Sequoia
+
+  # Read Aloud: lists the .txt files in www/read_aloud (attribute file_list)
+  - platform: folder
+    folder: /config/www/read_aloud
+    filter: "*.txt"
+
+  - platform: feedparser
+    name: Breaking News
+    feed_url: https://feeds.bbci.co.uk/news/world/rss.xml
+    scan_interval:
+      minutes: 15
+    date_format: "%a, %b %d %I:%M %p"
+    local_time: true
+    show_topn: 10
+    inclusions:
+      - title
+      - link
+      - published
+
+  # Barometric pressure change over the last 3h / range over 6h (sensor.barometric_pressure,
+  # one physical Aqara sensor; switched from lumi_lumi_weather_pressure after the 2026-10-25 swap).
+  # Feeds sensor.pressure_trend and the storm alert in automations/storm_alert.yaml.
+  - platform: statistics
+    name: Pressure Change 3h
+    unique_id: camper_pressure_change_3h
+    entity_id: sensor.barometric_pressure
+    state_characteristic: change
+    max_age:
+      hours: 3
+    sampling_size: 1000
+    precision: 1
+  - platform: statistics
+    name: Pressure Range 6h
+    unique_id: camper_pressure_range_6h
+    entity_id: sensor.barometric_pressure
+    state_characteristic: distance_absolute
+    max_age:
+      hours: 6
+    sampling_size: 2000
+    precision: 1
+
+# Automations - Load multiple automation files
+# All automations live in automations.yaml (UI-editable). The old automations/ folder only holds backups.
+automation: !include automations.yaml
+
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+# ============================================
+# Camper / RV Control Helpers
+# Placeholder entities for camper operations.
+# Replace with real Z-Wave/Zigbee sensors & relays
+# as hardware gets wired in; entity_ids below are
+# what the Camper dashboard expects.
+# ============================================
+input_boolean:
+  # Thermostat schedule (Schedule tab) - work-night temps
+  camper_tsched_enabled:
+    name: Thermostat Schedule
+    icon: mdi:calendar-clock
+  camper_tsched_work_night:
+    name: "Thermostat: Last Night Was a Work Night"
+    icon: mdi:briefcase-clock
+  camper_water_pump:
+    name: Water Pump
+    icon: mdi:water-pump
+  camper_interior_lights:
+    name: Interior Lights
+    icon: mdi:ceiling-light
+  camper_water_heater_gas_lit:
+    name: Water Heater Gas Burner Lit
+    icon: mdi:fire
+  camper_water_heater_ignition_fault:
+    name: Water Heater Ignition Lockout
+    icon: mdi:alert-circle
+  camper_water_heater_high_limit_fault:
+    name: Water Heater High-Limit Fault
+    icon: mdi:thermometer-alert
+  camper_water_heater_bypass:
+    name: Water Heater Winterize Bypass
+    icon: mdi:valve
+  camper_rain_detected:
+    name: Rain Detected (placeholder - ESP32 pending)
+    icon: mdi:weather-pouring
+  camper_away_mode:
+    name: Away Mode (both gone)
+    icon: mdi:home-export-outline
+  camper_wall_panel_connected:
+    name: Wall Panel Wired In
+    icon: mdi:connection
+  camper_overtime_thursday:
+    name: Overtime Thursday
+    icon: mdi:briefcase-clock
+  camper_trash_out:
+    name: Trash Is Out
+    icon: mdi:trash-can
+  camper_smart_auto:
+    name: Smart Auto (HA switches heat/cool)
+    icon: mdi:thermostat-auto
+
+input_number:
+  # Thermostat schedule (Schedule tab): a Heat to and an A/C to for each period.
+  # The schedule uses these exactly; A/C is only held at or above heat.
+  camper_tsched_night_heat:
+    name: Night Heat to
+    icon: mdi:fire
+    min: 55
+    max: 78
+    step: 1
+    mode: box
+    unit_of_measurement: °F
+  camper_tsched_night_cool:
+    name: Night A/C to
+    icon: mdi:snowflake
+    min: 60
+    max: 85
+    step: 1
+    mode: box
+    unit_of_measurement: °F
+  camper_tsched_home_heat:
+    name: Warm Up Heat to
+    icon: mdi:fire
+    min: 55
+    max: 78
+    step: 1
+    mode: box
+    unit_of_measurement: °F
+  camper_tsched_home_cool:
+    name: Warm Up A/C to
+    icon: mdi:snowflake
+    min: 60
+    max: 85
+    step: 1
+    mode: box
+    unit_of_measurement: °F
+  camper_tsched_sleep_heat:
+    name: Morning Sleep Heat to
+    icon: mdi:fire
+    min: 55
+    max: 78
+    step: 1
+    mode: box
+    unit_of_measurement: °F
+  camper_tsched_sleep_cool:
+    name: Morning Sleep A/C to
+    icon: mdi:snowflake
+    min: 60
+    max: 85
+    step: 1
+    mode: box
+    unit_of_measurement: °F
+  camper_tsched_day_heat:
+    name: Day Heat to
+    icon: mdi:fire
+    min: 55
+    max: 78
+    step: 1
+    mode: box
+    unit_of_measurement: °F
+  camper_tsched_day_cool:
+    name: Day A/C to
+    icon: mdi:snowflake
+    min: 60
+    max: 85
+    step: 1
+    mode: box
+    unit_of_measurement: °F
+  camper_fresh_tank:
+    name: Fresh Water Tank
+    icon: mdi:water
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
+  camper_grey_tank:
+    name: Grey Water Tank
+    icon: mdi:water-alert
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
+  camper_black_tank:
+    name: Black Water Tank
+    icon: mdi:water-alert-outline
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
+  camper_battery_voltage:
+    name: House Battery Voltage
+    icon: mdi:car-battery
+    min: 0
+    max: 15
+    step: 0.1
+    unit_of_measurement: 'V'
+  camper_battery_soc:
+    name: House Battery Charge
+    icon: mdi:battery-charging-70
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
+  camper_propane_level:
+    name: Propane Level
+    icon: mdi:propane-tank
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
+  camper_wind_speed_mph:
+    name: Wind Speed (placeholder - ESP32 pending)
+    icon: mdi:weather-windy
+    min: 0
+    max: 60
+    step: 1
+    unit_of_measurement: mph
+  camper_water_heater_temp:
+    name: Water Heater Tank Temp
+    icon: mdi:thermometer
+    min: 40
+    max: 180
+    step: 1
+    unit_of_measurement: °F
+  camper_fan_temp_threshold:
+    name: Fan Auto-On Temperature
+    icon: mdi:thermometer-alert
+    min: 60
+    max: 95
+    step: 1
+    unit_of_measurement: °F
+    initial: 78
+  # --- Smart Auto: HA-managed heat/cool changeover (automations/smart_auto.yaml) ---
+  camper_smart_cool_to:
+    name: Smart Auto Cool To
+    icon: mdi:snowflake
+    min: 65
+    max: 85
+    step: 1
+    unit_of_measurement: °F
+  camper_smart_heat_to:
+    name: Smart Auto Heat To
+    icon: mdi:fire
+    min: 50
+    max: 76
+    step: 1
+    unit_of_measurement: °F
+  # --- Goodnight thermostat setpoints (°F) ---
+  camper_sleep_cool_setpoint:
+    name: Sleep Cool Setpoint
+    icon: mdi:snowflake-thermometer
+    min: 60
+    max: 85
+    step: 1
+    unit_of_measurement: °F
+  camper_sleep_heat_setpoint:
+    name: Sleep Heat Setpoint
+    icon: mdi:fire
+    min: 50
+    max: 75
+    step: 1
+    unit_of_measurement: °F
+  # Goodnight saves the daytime setpoints here and puts them back when sleep ends
+  camper_day_cool_setpoint:
+    name: Daytime Cool Setpoint (saved by Goodnight)
+    icon: mdi:snowflake
+    min: 65
+    max: 85
+    step: 1
+    unit_of_measurement: °F
+  camper_day_heat_setpoint:
+    name: Daytime Heat Setpoint (saved by Goodnight)
+    icon: mdi:fire
+    min: 50
+    max: 76
+    step: 1
+    unit_of_measurement: °F
+
+input_text:
+  # YouTube video ID the TV plays for the dog when everyone leaves
+  camper_dog_tv_video:
+    name: Dog TV YouTube Video ID
+    icon: mdi:dog
+    max: 32
+  # Stereo page presets: which station is on (script.stereo_play_station sets both;
+  # automation stereo_forget_station clears them when something else plays)
+  stereo_station:
+    name: Stereo Station
+    icon: mdi:radio
+    max: 60
+  stereo_station_url:
+    name: Stereo Station URL
+    icon: mdi:link
+    max: 255
+  # Stereo page "No Commercials" buttons: which YouTube mix is on the TV
+  # (script.camper_tv_youtube_music sets it, script.camper_dog_tv clears it)
+  camper_tv_music:
+    name: TV Music Mix
+    icon: mdi:youtube
+    max: 60
+
+# Recurring care tasks - last-done dates (see custom_templates/camper_tasks.jinja)
+input_datetime:
+  # Thermostat schedule (Schedule tab) - only runs after/on work nights
+  camper_tsched_night_start:
+    name: Night Temp Starts
+    icon: mdi:weather-night
+    has_date: false
+    has_time: true
+  camper_tsched_home:
+    name: Warm Up For Coming Home
+    icon: mdi:home-clock
+    has_date: false
+    has_time: true
+  camper_tsched_sleep_start:
+    name: Morning Sleep Starts
+    icon: mdi:sleep
+    has_date: false
+    has_time: true
+  camper_tsched_sleep_end:
+    name: Morning Sleep Ends
+    icon: mdi:alarm
+    has_date: false
+    has_time: true
+  # When Goodnight's sleep temperatures end (8 h after Goodnight)
+  camper_sleep_until:
+    name: Sleep Temperatures Until
+    icon: mdi:weather-night
+    has_date: true
+    has_time: true
+  task_daisy_heartworm:
+    name: "Last done: Heartworm pill"
+    icon: mdi:pill
+    has_date: true
+    has_time: false
+  task_daisy_flea_tick:
+    name: "Last done: Flea & tick dose"
+    icon: mdi:spray
+    has_date: true
+    has_time: false
+  task_daisy_vet:
+    name: "Last done: Vet checkup & shots"
+    icon: mdi:stethoscope
+    has_date: true
+    has_time: false
+  task_dump_tanks:
+    name: "Last done: Dump black & grey tanks"
+    icon: mdi:toilet
+    has_date: true
+    has_time: false
+  task_ac_filter:
+    name: "Last done: Clean A/C filter"
+    icon: mdi:air-filter
+    has_date: true
+    has_time: false
+  task_dehum_filter:
+    name: "Last done: Clean dehumidifier filter"
+    icon: mdi:air-humidifier
+    has_date: true
+    has_time: false
+  task_smoke_co_test:
+    name: "Last done: Test smoke & CO alarm"
+    icon: mdi:smoke-detector-variant
+    has_date: true
+    has_time: false
+  task_tire_pressure:
+    name: "Last done: Check tire pressure"
+    icon: mdi:car-tire-alert
+    has_date: true
+    has_time: false
+  task_water_filter:
+    name: "Last done: Change water filter"
+    icon: mdi:water-check
+    has_date: true
+    has_time: false
+  task_roof_seals:
+    name: "Last done: Inspect roof & seals"
+    icon: mdi:home-roof
+    has_date: true
+    has_time: false
+  task_sanitize_tank:
+    name: "Last done: Sanitize fresh water tank"
+    icon: mdi:water-sync
+    has_date: true
+    has_time: false
+  task_glade_1:
+    name: "Last done: Refill Glade - Bathroom"
+    icon: mdi:spray
+    has_date: true
+    has_time: false
+  task_glade_2:
+    name: "Last done: Refill Glade - Kitchen"
+    icon: mdi:spray
+    has_date: true
+    has_time: false
+  task_glade_1_batt:
+    name: "Last done: Glade batteries - Bathroom"
+    icon: mdi:battery-sync
+    has_date: true
+    has_time: false
+  task_glade_2_batt:
+    name: "Last done: Glade batteries - Kitchen"
+    icon: mdi:battery-sync
+    has_date: true
+    has_time: false
+
+# Camera gestures need two in a row: ✌️ Victory arms this, then the command gesture
+# (☝️ ✊ 👍 👎 🤟) has to come while it's running. Added 2026-10-10 - single gestures
+# kept firing by mistake. 30 s: camper_vision ignores all gestures for 4 s after
+# sending one, and 🤟 took 23 s to register on the first real try.
+timer:
+  camper_gesture_armed:
+    name: "Gesture Armed (✌️)"
+    icon: mdi:hand-peace
+    duration: "00:00:30"
+
+input_select:
+  # Cereal picker for the shopping list (2026-10-17) - picking one adds "Cereal - <name>".
+  shopping_cereal:
+    name: Cereal
+    icon: mdi:bowl-mix
+    options:
+      - "Pick a cereal..."
+      - "Apple Jacks"
+      - "Cap'n Crunch"
+      - "Cap'n Crunch's Crunch Berries"
+      - "Cheerios"
+      - "Cinnamon Toast Crunch"
+      - "Cocoa Pebbles"
+      - "Cocoa Puffs"
+      - "Corn Flakes"
+      - "Corn Pops"
+      - "Cracklin' Oat Bran"
+      - "Froot Loops"
+      - "Frosted Flakes"
+      - "Frosted Mini-Wheats"
+      - "Fruity Pebbles"
+      - "Golden Grahams"
+      - "Great Value (Walmart brand)"
+      - "Honey Bunches of Oats"
+      - "Honey Nut Cheerios"
+      - "Honey Smacks"
+      - "Kix"
+      - "Life"
+      - "Lucky Charms"
+      - "Raisin Bran"
+      - "Reese's Puffs"
+      - "Rice Chex"
+      - "Rice Krispies"
+      - "Special K"
+      - "Trix"
+  # Read Aloud: .txt file to read on the camper stereo (options filled by an automation)
+  read_aloud_file:
+    name: "Read Aloud File"
+    icon: mdi:file-document-outline
+    options:
+      - "(no files yet)"
+
+  # Ceiling fan override - Auto lets the temperature automation run it; Stay On/Off holds it
+  camper_ceiling_fan_mode:
+    name: "Ceiling Fan Mode"
+    icon: mdi:fan-auto
+    options: ["Auto", "Stay On", "Stay Off"]
+  # Glade Automatic Spray timer switch on each holder - sets how often its refill is due
+  camper_glade_1_timer:
+    name: "Glade Bathroom Timer"
+    icon: mdi:timer-outline
+    options: ["Every 36 min", "Every 18 min", "Every 9 min"]
+  camper_glade_2_timer:
+    name: "Glade Kitchen Timer"
+    icon: mdi:timer-outline
+    options: ["Every 36 min", "Every 18 min", "Every 9 min"]
+  # Climate page dropdowns (kept in sync by the thermostat_*_select_* automations)
+  camper_thermostat_mode:
+    name: Thermostat Mode
+    options:
+      - "Off"
+      - Cool
+      - Heat
+      - Auto
+      - Dry
+      - Fan only
+    icon: mdi:thermostat
+  camper_thermostat_fan:
+    name: Thermostat Fan
+    options:
+      - Cycled Low
+      - Cycled High
+      - Manual Low
+      - Manual High
+      - Auto
+    icon: mdi:fan
+  camper_background:
+    name: Background
+    options:
+      - Dark
+      - Beach
+      - Forest
+    icon: mdi:image-multiple-outline
+  camper_water_heater_mode:
+    name: Water Heater Mode
+    options:
+      - "Off"
+      - Gas
+      - Electric
+      - "Gas + Electric"
+    initial: "Off"
+    icon: mdi:water-boiler
+
+
+# ============================================
+# Awning Cover
+# cover.awning passes everything through to the awning ESP32's own cover
+# (cover.camper_awning_camper_awning), so the dashboard, badges and
+# automations keep using cover.awning.
+# ============================================
+template:
+  # Weather page (2026-11-01): weather.get_forecasts only answers service calls, so
+  # copy a trimmed forecast into attributes the page can read. Trimmed to keep the DB small.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/30"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+    actions:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: hourly
+        response_variable: hourly_fc
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: daily
+        response_variable: daily_fc
+      # Extra services: if one is down the page still works from met.no.
+      - action: weather.get_forecasts
+        continue_on_error: true
+        target:
+          entity_id: weather.nws
+        data:
+          type: hourly
+        response_variable: nws_h
+      - action: weather.get_forecasts
+        continue_on_error: true
+        target:
+          entity_id: weather.nws
+        data:
+          type: twice_daily
+        response_variable: nws_t
+      - action: weather.get_forecasts
+        continue_on_error: true
+        target:
+          entity_id: weather.open_meteo
+        data:
+          type: daily
+        response_variable: om_d
+    sensor:
+      - name: "Camper Weather Forecast"
+        unique_id: camper_weather_forecast
+        icon: mdi:weather-partly-cloudy
+        state: "{{ now().strftime('%-I:%M %p') }}"
+        attributes:
+          hourly: >-
+            {% set nh = nws_h['weather.nws'].forecast if nws_h is defined and nws_h and 'weather.nws' in nws_h else [] %}{% set ns = namespace(o=[]) %}{% for f in hourly_fc['weather.forecast_home'].forecast[:24] %}{% set k = as_timestamp(f.datetime)|timestamp_custom('%d%H') %}{% set m = nh | selectattr('datetime','defined') | list %}{% set pn = namespace(p=none) %}{% for x in m %}{% if as_timestamp(x.datetime)|timestamp_custom('%d%H') == k %}{% set pn.p = x.precipitation_probability|default(none) %}{% endif %}{% endfor %}{% set ns.o = ns.o + [{'t': as_timestamp(f.datetime)|timestamp_custom('%-I %p'), 'c': f.condition, 'f': f.temperature|round(0), 'r': f.precipitation|default(0), 'p': pn.p}] %}{% endfor %}{{ ns.o }}
+          daily: >-
+            {% set nt = nws_t['weather.nws'].forecast if nws_t is defined and nws_t and 'weather.nws' in nws_t else [] %}{% set ns = namespace(o=[]) %}{% for f in daily_fc['weather.forecast_home'].forecast[:7] %}{% set dn = as_timestamp(f.datetime)|timestamp_custom('%A') %}{% set pn = namespace(p=none) %}{% for x in nt %}{% if as_timestamp(x.datetime)|timestamp_custom('%A') == dn and x.precipitation_probability is defined and (pn.p is none or x.precipitation_probability > pn.p) %}{% set pn.p = x.precipitation_probability %}{% endif %}{% endfor %}{% set ns.o = ns.o + [{'d': dn, 'c': f.condition, 'hi': f.temperature|round(0), 'lo': f.templow|default(none), 'r': f.precipitation|default(0), 'p': pn.p}] %}{% endfor %}{{ ns.o }}
+          met_hi: >-
+            {% set tm = (now() + timedelta(days=1)).strftime('%A') %}{% set n = namespace(v=none) %}{% for f in daily_fc['weather.forecast_home'].forecast %}{% if as_timestamp(f.datetime)|timestamp_custom('%A') == tm and n.v is none %}{% set n.v = f.temperature %}{% endif %}{% endfor %}{{ n.v }}
+          om_hi: >-
+            {% set tm = (now() + timedelta(days=1)).strftime('%A') %}{% set n = namespace(v=none) %}{% if om_d is defined and om_d and 'weather.open_meteo' in om_d %}{% for f in om_d['weather.open_meteo'].forecast %}{% if as_timestamp(f.datetime)|timestamp_custom('%A') == tm and n.v is none %}{% set n.v = f.temperature %}{% endif %}{% endfor %}{% endif %}{{ n.v }}
+          nws_hi: >-
+            {% set tm = (now() + timedelta(days=1)).strftime('%A') %}{% set n = namespace(v=none) %}{% if nws_t is defined and nws_t and 'weather.nws' in nws_t %}{% for f in nws_t['weather.nws'].forecast %}{% if f.is_daytime and as_timestamp(f.datetime)|timestamp_custom('%A') == tm and n.v is none %}{% set n.v = f.temperature %}{% endif %}{% endfor %}{% endif %}{{ n.v }}
+  # Pressure trend from the 3h change. A change over 10 hPa is almost always the
+  # camper changing altitude (about 1 hPa per 30 ft), not weather.
+  # One steady barometer reading (2026-10-25): the two Aqaras read about 3 hPa apart, so the
+  # trend must always come from the same one. Under Camper first, Over Bed if it drops out.
+  - sensor:
+      - name: "Barometric Pressure"
+        unique_id: camper_barometric_pressure
+        unit_of_measurement: hPa
+        device_class: atmospheric_pressure
+        state_class: measurement
+        icon: mdi:gauge
+        state: >-
+          {% set u = 'sensor.under_camper_pressure' if states('sensor.under_camper_pressure') | is_number else 'sensor.lumi_lumi_weather_pressure' %}
+          {% set p = states(u) | float(0) %}
+          {{ (p * 68.9476 if state_attr(u, 'unit_of_measurement') == 'psi' else p) | round(1) }}
+        availability: >-
+          {{ states('sensor.under_camper_pressure') | is_number or states('sensor.lumi_lumi_weather_pressure') | is_number }}
+  - sensor:
+      - name: "Pressure Trend"
+        unique_id: camper_pressure_trend
+        state: >-
+          {% set c = states('sensor.pressure_change_3h') | float(none) %}
+          {% if c is none %}unknown
+          {% elif c | abs > 10 %}Moved
+          {% elif c <= -3 %}Falling fast
+          {% elif c <= -1 %}Falling
+          {% elif c >= 3 %}Rising fast
+          {% elif c >= 1 %}Rising
+          {% else %}Steady{% endif %}
+        icon: >-
+          {% set t = this.state %}
+          {% if t in ['Falling fast', 'Falling'] %}mdi:trending-down
+          {% elif t in ['Rising fast', 'Rising'] %}mdi:trending-up
+          {% elif t == 'Moved' %}mdi:rv-truck
+          {% else %}mdi:trending-neutral{% endif %}
+  # Thermostat watchdog: on when the EasyTouch has been unavailable, or has
+  # stopped reporting (the integration's BLE lock can hang silently), for 15 min.
+  - binary_sensor:
+      - name: "Thermostat Problem"
+        unique_id: camper_thermostat_problem
+        device_class: problem
+        delay_on: "00:05:00"
+        state: >-
+          {% set e = 'climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate' %}
+          {{ states(e) in ['unavailable', 'unknown'] or states[e] is none
+             or (now() - states[e].last_reported) > timedelta(minutes=10) }}
+  # Shore power: if 3+ of the mains-powered smart devices drop off at once,
+  # the camper has lost power. Only works with the Pi, router and T-Mobile
+  # gateway on a UPS (otherwise HA goes down too).
+  - binary_sensor:
+      - name: "Camper Power Out"
+        unique_id: camper_power_out
+        device_class: problem
+        icon: mdi:power-plug-off
+        delay_on: "00:02:00"
+        delay_off: "00:01:00"
+        state: >-
+          {{ ['switch.smart_switch_1', 'switch.ceiling_fan', 'switch.tp_link_power_strip_63ce', 'media_player.bedroom_50_hisense_roku_tv']
+             | select('is_state', 'unavailable') | list | count >= 3 }}
+  # Morris's work week: regular nights Sun-Wed (leave 3:00 PM, clock in
+  # 4:30-5:00 PM, home ~4 AM), Thursday night optional overtime.
+  # Trash: out Wednesday (after the 4 AM homecoming or before leaving at 3 PM),
+  # pickup Thursday morning.
+  - sensor:
+      - name: "Morris Work Tonight"
+        unique_id: morris_work_tonight
+        icon: mdi:briefcase-clock
+        state: >-
+          {% set w = now().weekday() %}
+          {% if w in [6, 0, 1, 2] %}Yes - leave at 3:00 PM
+          {% elif w == 3 %}{{ 'Overtime - leave at 3:00 PM' if is_state('input_boolean.camper_overtime_thursday', 'on') else 'Optional overtime (not set)' }}
+          {% else %}No - day off{% endif %}
+      # Nadine: in-home child care Mon-Fri 12:00 PM to 7-8 PM (zone.nadine_s_work)
+      - name: "Nadine Work Today"
+        unique_id: nadine_work_today
+        icon: mdi:human-male-child
+        state: >-
+          {% set w = now().weekday() %}
+          {% if is_state('person.nadine', 'Child Care') %}At child care now - done 7-8 PM
+          {% elif w <= 4 and now().hour < 12 %}Child care 12:00 PM to 7-8 PM
+          {% elif w <= 4 and now().hour < 20 %}Child care today (12:00 PM to 7-8 PM)
+          {% elif w <= 4 %}Done for today
+          {% else %}Day off{% endif %}
+      - name: "Trash Day"
+        unique_id: camper_trash_day
+        icon: mdi:trash-can
+        state: >-
+          {% set w = now().weekday() %}
+          {% if w == 2 %}{{ 'Trash is out' if is_state('input_boolean.camper_trash_out', 'on') else 'Put the trash out today - pickup tomorrow morning' }}
+          {% elif w == 3 and now().hour < 12 %}Pickup is this morning
+          {% else %}{% set days = (2 - w) % 7 %}Next: put it out {{ 'tomorrow' if days == 1 else (now() + timedelta(days=days)).strftime('%A') }}{% endif %}
+  # Daisy + camper upkeep task status (custom_templates/camper_tasks.jinja)
+  - sensor:
+      - name: "Daisy Care"
+        unique_id: daisy_care_status
+        icon: mdi:dog
+        state: >-
+          {% from 'camper_tasks.jinja' import task_status, due_text %}
+          {% set l = task_status('Daisy') | from_json %}
+          {% if l and l[0].days_left <= 3 %}{{ l[0].name }}: {{ due_text(l[0].days_left) }}{% else %}All good{% endif %}
+        attributes:
+          tasks: >-
+            {% from 'camper_tasks.jinja' import task_status %}{{ task_status('Daisy') }}
+      - name: "Camper Upkeep"
+        unique_id: camper_upkeep_status
+        icon: mdi:tools
+        state: >-
+          {% from 'camper_tasks.jinja' import task_status %}
+          {% set n = task_status('Upkeep') | from_json | selectattr('days_left', 'le', 0) | list | count %}
+          {{ n ~ ' due' if n else 'All good' }}
+        attributes:
+          tasks: >-
+            {% from 'camper_tasks.jinja' import task_status %}{{ task_status('Upkeep') }}
+  # Sequoia OBD box (2026-10-17): an ESP32 in the Sequoia talks to the ELM327 over Bluetooth
+  # (instead of the Torque app) and POSTs JSON here - via Home Assistant Cloud, so it works
+  # from the phone hotspot anywhere. Names match Torque's so sequoia.jinja / the gauges find them.
+  # Firmware: vehicle-obd/ in the repo (on the Pi: /config/esphome/sequoia_obd_fw/). Fields: speed mph, rpm, coolant °F, trans °F, fuel %, volts.
+  - triggers:
+      - trigger: webhook
+        webhook_id: !secret sequoia_webhook_id
+        allowed_methods: [POST]
+        local_only: false
+    sensor:
+      - name: "Sequoia Speed (OBD)"
+        unique_id: sequoia_obd_speed
+        icon: mdi:speedometer
+        unit_of_measurement: "mph"
+        state_class: measurement
+        state: "{{ trigger.json.get('speed') }}"
+      - name: "Sequoia Engine RPM"
+        unique_id: sequoia_obd_rpm
+        icon: mdi:gauge
+        unit_of_measurement: "rpm"
+        state_class: measurement
+        state: "{{ trigger.json.get('rpm') }}"
+      - name: "Sequoia Engine Coolant Temperature"
+        unique_id: sequoia_obd_coolant
+        icon: mdi:coolant-temperature
+        unit_of_measurement: "°F"
+        state_class: measurement
+        device_class: temperature
+        state: "{{ trigger.json.get('coolant') }}"
+      - name: "Sequoia Trans Temp"
+        unique_id: sequoia_obd_trans
+        icon: mdi:car-shift-pattern
+        unit_of_measurement: "°F"
+        state_class: measurement
+        device_class: temperature
+        state: "{{ trigger.json.get('trans') }}"
+      - name: "Sequoia Fuel Level"
+        unique_id: sequoia_obd_fuel
+        icon: mdi:gas-station
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: "{{ trigger.json.get('fuel') }}"
+      - name: "Sequoia Voltage (Control Module)"
+        unique_id: sequoia_obd_volts
+        icon: mdi:car-battery
+        unit_of_measurement: "V"
+        state_class: measurement
+        device_class: voltage
+        state: "{{ trigger.json.get('volts') }}"
+      - name: "Sequoia Last Update"
+        unique_id: sequoia_last_update
+        icon: mdi:car-clock
+        device_class: timestamp
+        # stamped on every upload that carries readings (the OBD box sends {} when the truck is off)
+        state: "{{ now().isoformat() if trigger.json.get('speed') is not none or trigger.json.get('rpm') is not none else this.state | default(none) }}"
+      - name: "Sequoia Trans Raw"
+        unique_id: sequoia_obd_trans_raw
+        icon: mdi:code-brackets
+        state: "{{ trigger.json.get('trans_raw') }}"
+  # 2016 Sequoia gauges (2026-10-17) - Torque readings found by name, in mph / °F
+  # (custom_templates/sequoia.jinja). Unavailable until Torque has uploaded that reading.
+  - sensor:
+      - name: "Sequoia Gauge Speed"
+        unique_id: sequoia_gauge_speed
+        icon: mdi:speedometer
+        unit_of_measurement: "mph"
+        state_class: measurement
+        availability: "{% from 'sequoia.jinja' import seq_ok %}{{ seq_ok('speed .obd;speed') | trim == 'True' }}"
+        state: "{% from 'sequoia.jinja' import seq_value %}{{ seq_value('speed .obd;speed', 'speed') }}"
+      - name: "Sequoia Gauge RPM"
+        unique_id: sequoia_gauge_rpm
+        icon: mdi:gauge
+        unit_of_measurement: "rpm"
+        state_class: measurement
+        availability: "{% from 'sequoia.jinja' import seq_ok %}{{ seq_ok('rpm') | trim == 'True' }}"
+        state: "{% from 'sequoia.jinja' import seq_value %}{{ seq_value('rpm', 'int') }}"
+      - name: "Sequoia Gauge Coolant Temp"
+        unique_id: sequoia_gauge_coolant
+        icon: mdi:coolant-temperature
+        unit_of_measurement: "°F"
+        state_class: measurement
+        device_class: temperature
+        availability: "{% from 'sequoia.jinja' import seq_ok %}{{ seq_ok('coolant') | trim == 'True' }}"
+        state: "{% from 'sequoia.jinja' import seq_value %}{{ seq_value('coolant', 'temp') }}"
+      - name: "Sequoia Gauge Transmission Temp"
+        unique_id: sequoia_gauge_trans
+        icon: mdi:car-shift-pattern
+        unit_of_measurement: "°F"
+        state_class: measurement
+        device_class: temperature
+        availability: "{% from 'sequoia.jinja' import seq_ok %}{{ seq_ok('trans temp;trans') | trim == 'True' }}"
+        state: "{% from 'sequoia.jinja' import seq_value %}{{ seq_value('trans temp;trans', 'temp') }}"
+      - name: "Sequoia Gauge Fuel Level"
+        unique_id: sequoia_gauge_fuel
+        icon: mdi:gas-station
+        unit_of_measurement: "%"
+        state_class: measurement
+        availability: "{% from 'sequoia.jinja' import seq_ok %}{{ seq_ok('fuel level') | trim == 'True' }}"
+        state: "{% from 'sequoia.jinja' import seq_value %}{{ seq_value('fuel level', '') }}"
+      - name: "Sequoia Gauge Battery Voltage"
+        unique_id: sequoia_gauge_volts
+        icon: mdi:car-battery
+        unit_of_measurement: "V"
+        state_class: measurement
+        device_class: voltage
+        availability: "{% from 'sequoia.jinja' import seq_ok %}{{ seq_ok('voltage .control;volt') | trim == 'True' }}"
+        state: "{% from 'sequoia.jinja' import seq_value %}{{ seq_value('voltage .control;volt', '') }}"
+  # Shopping list items (2026-10-17) - todo.shopping_list's state is only a count, so this
+  # fetches the names. Quick-add buttons and the store reminder use it.
+  - triggers:
+      - trigger: state
+        entity_id: todo.shopping_list
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: time_pattern
+        minutes: /5
+    actions:
+      - action: todo.get_items
+        target: { entity_id: todo.shopping_list }
+        data: { status: needs_action }
+        response_variable: r
+    sensor:
+      - name: "Shopping List Items"
+        unique_id: shopping_list_items
+        icon: mdi:cart
+        state: "{{ r['todo.shopping_list']['items'] | count }}"
+        attributes:
+          items: "{{ r['todo.shopping_list']['items'] | map(attribute='summary') | list }}"
+          # Picture for each item, same order (2026-10-17) - for the picture list on the
+          # Shopping page. Exact names first, then words in typed items, else a cart.
+          pictures: >-
+            {%- set Q = {'milk': 'milk.png', 'eggs': 'eggs.png', 'wheat bread': 'wheat_bread.png', 'coffee pods': 'folgers_pods.jpg', 'coffee pods (folgers)': 'folgers_pods.jpg',
+                 'coffee creamer (international delight caramel macchiato)': 'coffee_creamer_id.jpg', 'coffee creamer (caramel macchiato)': 'coffee_creamer_id.jpg',
+                 'bottled water': 'pure_life.jpg', 'bottled water (pure life)': 'pure_life.jpg', 'paper towels': 'towels/bounty.jpg', 'toilet paper': 'angel_soft.jpg', 'toilet paper (charmin ultra soft)': 'charmin.jpg', 'toilet paper (angel soft)': 'angel_soft.jpg',
+                 'trash bags': 'hefty.jpg', 'trash bags (hefty)': 'hefty.jpg', 'dog treats': 'dog_treats.png', 'tank treatment (amazon)': 'tank_treatment_liquified.jpg', 'tank treatment - liquified orange (amazon)': 'tank_treatment_liquified.jpg',
+                 'propane': 'propane.png', 'laundry detergent': 'laundry/tide_original.jpg', 'dawn dish soap': 'dawn/ultra_original.jpg',
+                 'paper plates': 'dixie_plates.jpg', 'paper plates (dixie ultra)': 'dixie_plates.jpg', 'paper bowls (dixie ultra)': 'dixie_bowls.jpg', 'paper bowls': 'dixie_bowls.jpg', 'egg nog': 'eggnog/pet_eggnog_half_gallon.jpg', 'eggnog': 'eggnog/pet_eggnog_half_gallon.jpg', 'egg nog - pet eggnog half gallon': 'eggnog/pet_eggnog_half_gallon.jpg', 'egg nog - pet eggnog pint': 'eggnog/pet_eggnog_pint.jpg', 'egg nog - great value eggnog': 'eggnog/great_value.jpg', 'little debbie cakes': 'sweet_cakes.png',
+                 'dog food - evolve simply six': 'dog/evolve_simply_six.jpg', 'dog food - freshpet roll (fridge)': 'dog/freshpet_roll.jpg',
+                 'dog food - freshpet bag (fridge)': 'dog/freshpet_bag.jpg', 'cereal - great value (walmart brand)': 'cereal/great_value_walmart_brand.png'} -%}
+            {%- set K = [['creamer', 'coffee_creamer_id.jpg'], ['liquified', 'tank_treatment_liquified.jpg'], ['tank treatment', 'tank_treatment_liquified.jpg'], ['milk', 'milk.png'], ['nog', 'eggnog/pet_eggnog_half_gallon.jpg'], ['egg', 'eggs.png'], ['bread', 'wheat_bread.png'],
+                 ['folgers', 'folgers_pods.jpg'], ['coffee', 'folgers_pods.jpg'], ['pure life', 'pure_life.jpg'], ['water', 'pure_life.jpg'], ['bounty', 'towels/bounty.jpg'], ['viva', 'towels/viva.jpg'], ['paper towel', 'towels/bounty.jpg'], ['angel soft', 'angel_soft.jpg'], ['charmin', 'charmin.jpg'], ['toilet', 'angel_soft.jpg'],
+                 ['hefty', 'hefty.jpg'], ['trash', 'hefty.jpg'], ['evolve', 'dog/evolve_simply_six.jpg'], ['freshpet', 'dog/freshpet_roll.jpg'], ['full moon', 'dog/treat_full_moon_chicken_jerky.jpg'], ['blue buffalo', 'dog/treat_blue_buffalo_blue_bits.jpg'], ['treat', 'dog_treats.png'],
+                 ['dog food', 'dog_food.png'], ['propane', 'propane.png'], ['tide', 'laundry/tide_original.jpg'], ['gain', 'laundry/gain_original.jpg'], ['detergent', 'laundry/tide_original.jpg'], ['dawn', 'dawn/ultra_original.jpg'], ['soap', 'dawn/ultra_original.jpg'],
+                 ['dixie', 'dixie_plates.jpg'], ['bowl', 'dixie_bowls.jpg'], ['plate', 'dixie_plates.jpg'], ['cereal', 'cereal.png'], ['debbie', 'sweet_cakes.png']] -%}
+            {%- set ns = namespace(p=[]) -%}
+            {%- for it in r['todo.shopping_list']['items'] | map(attribute='summary') -%}
+              {%- set n = it | lower | trim -%}
+              {%- set u = namespace(v='cart.png') -%}
+              {%- if n in Q -%}{%- set u.v = Q[n] -%}
+              {%- elif n.startswith('cereal - ') -%}{%- set u.v = 'cereal/' ~ (n[9:] | regex_replace('[^a-z0-9]+', '_') | regex_replace('^_+|_+$', '')) ~ '.jpg' -%}
+              {%- elif n.startswith('dog treats - ') -%}{%- set u.v = 'dog/treat_' ~ (n[13:] | regex_replace('[^a-z0-9]+', '_') | regex_replace('^_+|_+$', '')) ~ '.jpg' -%}
+              {%- elif n.startswith('sealant - ') -%}{%- set u.v = 'sealant/' ~ (n[10:] | regex_replace('[^a-z0-9]+', '_') | regex_replace('^_+|_+$', '')) ~ '.jpg' -%}
+              {%- elif n.startswith('laundry - ') -%}{%- set u.v = 'laundry/' ~ (n[10:] | regex_replace('[^a-z0-9]+', '_') | regex_replace('^_+|_+$', '')) ~ '.jpg' -%}
+              {%- elif n.startswith('paper towels - ') -%}{%- set u.v = 'towels/' ~ (n[15:] | regex_replace('[^a-z0-9]+', '_') | regex_replace('^_+|_+$', '')) ~ '.jpg' -%}
+              {%- elif n.startswith('toilet paper - ') -%}{%- set u.v = 'tp/' ~ (n[15:] | regex_replace('[^a-z0-9]+', '_') | regex_replace('^_+|_+$', '')) ~ '.jpg' -%}
+              {%- elif n.startswith('dawn - ') -%}{%- set u.v = 'dawn/' ~ (n[7:] | regex_replace('[^a-z0-9]+', '_') | regex_replace('^_+|_+$', '')) ~ '.jpg' -%}
+              {%- elif n.startswith('little debbie - ') -%}{%- set u.v = 'littledebbie/' ~ (n[16:] | regex_replace('[^a-z0-9]+', '_') | regex_replace('^_+|_+$', '')) ~ '.jpg' -%}
+              {%- else -%}{%- for k in K -%}{%- if u.v == 'cart.png' and k[0] in n -%}{%- set u.v = k[1] -%}{%- endif -%}{%- endfor -%}
+              {%- endif -%}
+              {%- set ns.p = ns.p + ['/local/shopping/' ~ u.v] -%}
+            {%- endfor -%}
+            {{ ns.p }}
+  # Any wireless leak probe wet (custom_templates/camper_leaks.jinja). "wet" lists the
+  # probes; "heater" is true when one has "heater" in its name (shuts the burner off too).
+  - binary_sensor:
+      - name: "Camper Water Leak"
+        unique_id: camper_water_leak
+        device_class: moisture
+        icon: mdi:water-alert
+        state: >-
+          {% from 'camper_leaks.jinja' import wet_leak_probes %}{{ wet_leak_probes() | from_json | count > 0 }}
+        attributes:
+          wet: >-
+            {% from 'camper_leaks.jinja' import wet_leak_probes %}{{ wet_leak_probes() | from_json }}
+          heater: >-
+            {% from 'camper_leaks.jinja' import wet_leak_probes %}{{ wet_leak_probes() | from_json | select('search', '(?i)heater') | list | count > 0 }}
+  # Daisy is home alone whenever both people are known to be away
+  - binary_sensor:
+      - name: "Daisy Home Alone"
+        unique_id: daisy_home_alone
+        icon: mdi:dog-side
+        state: >-
+          {{ states('person.morris') not in ['home', 'unknown', 'unavailable']
+             and states('person.nadine') not in ['home', 'unknown', 'unavailable'] }}
+  - cover:
+      - name: "Awning"
+        unique_id: camper_awning_cover
+        device_class: awning
+        availability: "{{ states('cover.camper_awning_camper_awning') != 'unavailable' }}"
+        state: "{{ states('cover.camper_awning_camper_awning') }}"
+        position: "{{ state_attr('cover.camper_awning_camper_awning', 'current_position') }}"
+        open_cover:
+          - action: cover.open_cover
+            target:
+              entity_id: cover.camper_awning_camper_awning
+        close_cover:
+          - action: cover.close_cover
+            target:
+              entity_id: cover.camper_awning_camper_awning
+        stop_cover:
+          - action: cover.stop_cover
+            target:
+              entity_id: cover.camper_awning_camper_awning
+        set_cover_position:
+          - action: cover.set_cover_position
+            target:
+              entity_id: cover.camper_awning_camper_awning
+            data:
+              position: "{{ position }}"
+
+# ============================================
+# T-Mobile 5G gateway (KVD21) signal - read-only, no login needed.
+# Watch these while moving the gateway to find the best spot.
+# SINR: >10 good, 0-10 ok, <0 poor. RSRP: >-90 good, -90..-105 ok, <-105 poor.
+# ============================================
+rest:
+  - resource: http://192.168.12.1/TMI/v1/gateway?get=all
+    scan_interval: 30
+    timeout: 10
+    sensor:
+      - name: "5G Signal SINR"
+        unique_id: tmobile_5g_sinr
+        value_template: "{{ value_json.signal['5g'].sinr }}"
+        unit_of_measurement: "dB"
+        state_class: measurement
+        icon: mdi:signal-5g
+      - name: "5G Signal RSRP"
+        unique_id: tmobile_5g_rsrp
+        value_template: "{{ value_json.signal['5g'].rsrp }}"
+        unit_of_measurement: "dBm"
+        device_class: signal_strength
+        state_class: measurement
+      - name: "5G Signal RSRQ"
+        unique_id: tmobile_5g_rsrq
+        value_template: "{{ value_json.signal['5g'].rsrq }}"
+        unit_of_measurement: "dB"
+        state_class: measurement
+        icon: mdi:signal
+      - name: "5G Signal Bars"
+        unique_id: tmobile_5g_bars
+        value_template: "{{ value_json.signal['5g'].bars }}"
+        state_class: measurement
+        icon: mdi:signal-cellular-3
+      - name: "5G Tower ID"
+        unique_id: tmobile_5g_tower_id
+        value_template: "{{ value_json.signal['5g'].gNBID }}"
+        icon: mdi:radio-tower
+      - name: "5G Band"
+        unique_id: tmobile_5g_band
+        value_template: "{{ value_json.signal['5g'].bands | join(', ') }}"
+        icon: mdi:radio-tower
+
+# ============================================
+# National Weather Service alerts for wherever Home is (follows the camper
+# when Home is moved). api.weather.gov needs a User-Agent; no key.
+# ============================================
+  - resource_template: >-
+      https://api.weather.gov/alerts/active?point={{ state_attr('zone.home','latitude') | round(4) }},{{ state_attr('zone.home','longitude') | round(4) }}
+    headers:
+      User-Agent: "camper-home-assistant ([email redacted])"
+      Accept: application/geo+json
+    scan_interval: 120
+    timeout: 20
+    sensor:
+      - name: "NWS Alert Count"
+        unique_id: nws_alert_count
+        icon: mdi:alert
+        # Keep the last value when api.weather.gov returns an error page
+        value_template: >-
+          {% if value_json is defined and value_json.features is defined %}{{ value_json.features | length }}
+          {%- else %}{{ states('sensor.nws_alert_count') }}{% endif %}
+        state_class: measurement
+      - name: "NWS Alerts"
+        unique_id: nws_alerts
+        icon: mdi:weather-lightning-rainy
+        value_template: >-
+          {% if value_json is defined and value_json.features is defined %}
+          {% set ev = value_json.features | map(attribute='properties.event') | unique | list %}
+          {{ (ev | join(', ') if ev else 'None')[:250] }}
+          {% else %}{{ states('sensor.nws_alerts') }}{% endif %}
+      - name: "NWS Alert Headline"
+        unique_id: nws_alert_headline
+        icon: mdi:message-alert
+        value_template: >-
+          {% if value_json is defined and value_json.features is defined %}
+          {% set f = value_json.features | sort(attribute='properties.sent', reverse=true) | list %}
+          {{ (f[0].properties.headline or f[0].properties.event if f else 'None')[:250] }}
+          {% else %}{{ states('sensor.nws_alert_headline') }}{% endif %}
+
+# ============================================
+# Camper Brain (llama-server on the Jetson) health
+# ============================================
+  - resource: http://192.168.0.173:8090/health
+    scan_interval: 60
+    timeout: 10
+    sensor:
+      - name: "Camper Brain Status"
+        unique_id: camper_brain_status
+        icon: mdi:brain
+        value_template: "{{ value_json.status | default('error') }}"
+
+# Read Aloud: fetches a .txt file from www/read_aloud (served at /local) for script.read_aloud
+rest_command:
+  read_aloud_text:
+    url: "http://127.0.0.1:8123/local/read_aloud/{{ file | urlencode }}"
+    method: get
+    timeout: 15
+
+# Grocery store for the shopping list reminder (2026-10-17). Walmart Supercenter #1034,
+# 705 E Dixon Blvd, Shelby NC (OpenStreetMap). 200 m covers the building and parking lot.
+zone:
+  - name: Walmart Shelby
+    latitude: 35.2773291
+    longitude: -81.5298412
+    radius: 200
+    icon: mdi:cart
+  # Other local Walmarts (2026-10-17, OpenStreetMap) - within ~35 miles of Jonesville.
+  - name: Walmart Union - N Duncan Bypass
+    latitude: 34.726765
+    longitude: -81.641205
+    radius: 200
+    icon: mdi:cart
+  - name: Walmart Gaffney - Walton Dr
+    latitude: 35.087277
+    longitude: -81.665932
+    radius: 200
+    icon: mdi:cart
+  - name: Walmart Spartanburg - E Main St
+    latitude: 34.972873
+    longitude: -81.877532
+    radius: 200
+    icon: mdi:cart
+  - name: Walmart Spartanburg - Runnymeade Ln
+    latitude: 34.933367
+    longitude: -81.984803
+    radius: 200
+    icon: mdi:cart
+  - name: Walmart Spartanburg - Cedar Springs Rd (Neighborhood Market)
+    latitude: 34.921112
+    longitude: -81.884451
+    radius: 200
+    icon: mdi:cart
+  - name: Walmart Boiling Springs SC - Hwy 9
+    latitude: 35.052497
+    longitude: -81.985775
+    radius: 200
+    icon: mdi:cart
+  - name: Walmart Kings Mountain - Shelby Rd (Neighborhood Market)
+    latitude: 35.238428
+    longitude: -81.362554
+    radius: 200
+    icon: mdi:cart
+  # Ingles within ~35 miles of Jonesville (2026-10-17, OpenStreetMap). 150 m so the Shelby
+  # E Dixon one doesn't overlap the Walmart across the road.
+  - name: Ingles Spartanburg - S Pine St
+    latitude: 34.932789
+    longitude: -81.894398
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Spartanburg - E Main St
+    latitude: 34.980086
+    longitude: -81.867228
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Gaffney - Pryor St
+    latitude: 35.086013
+    longitude: -81.640276
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Gaffney - W Floyd Baker Blvd
+    latitude: 35.09275
+    longitude: -81.665506
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Spartanburg - Chesnee Hwy
+    latitude: 35.026757
+    longitude: -81.897347
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Spartanburg - Warren Abernathy Hwy
+    latitude: 34.936637
+    longitude: -82.004626
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Boiling Springs SC - Boiling Springs Rd
+    latitude: 35.023202
+    longitude: -81.961944
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Spartanburg - Asheville Hwy
+    latitude: 35.002028
+    longitude: -82.004122
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Duncan - E Main St
+    latitude: 34.886803
+    longitude: -82.071465
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Inman - Hwy 9
+    latitude: 35.064509
+    longitude: -81.998542
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Boiling Springs NC - Bethel Ave
+    latitude: 35.255248
+    longitude: -81.665407
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Shelby - S Post Rd
+    latitude: 35.243579
+    longitude: -81.508467
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Shelby - E Dixon Blvd
+    latitude: 35.273411
+    longitude: -81.528829
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Kings Mountain - Shelby Rd
+    latitude: 35.243391
+    longitude: -81.405498
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Shelby - W Dixon Blvd
+    latitude: 35.296502
+    longitude: -81.572554
+    radius: 150
+    icon: mdi:cart-outline
+  - name: Ingles Shelby - Fallston Rd
+    latitude: 35.320051
+    longitude: -81.518945
+    radius: 150
+    icon: mdi:cart-outline
+  # Dollar Generals in Gaffney, Shelby and Pacolet (2026-10-17) - the user uses all of them.
+  - name: Dollar General Gaffney - W Floyd Baker Blvd
+    latitude: 35.084631
+    longitude: -81.662381
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Gaffney - Boiling Springs Hwy
+    latitude: 35.137842
+    longitude: -81.67271
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Gaffney - Wilkinsville Hwy
+    latitude: 35.045994
+    longitude: -81.594123
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Gaffney - Old Race Track Rd
+    latitude: 35.017009
+    longitude: -81.65162
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Gaffney - N Limestone St
+    latitude: 35.082248
+    longitude: -81.640211
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Gaffney - Old Georgia Hwy
+    latitude: 35.064406
+    longitude: -81.663423
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Gaffney - E Frederick St
+    latitude: 35.060636
+    longitude: -81.640439
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Gaffney - Chesnee Hwy
+    latitude: 35.113379
+    longitude: -81.703063
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Shelby - W Dixon Blvd
+    latitude: 35.281475
+    longitude: -81.547529
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Shelby - E Dixon Blvd
+    latitude: 35.269616
+    longitude: -81.491814
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Shelby - S Lafayette St
+    latitude: 35.257048
+    longitude: -81.564795
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Shelby - S Post Rd
+    latitude: 35.246359
+    longitude: -81.510301
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Shelby - Polkville Rd
+    latitude: 35.360977
+    longitude: -81.573347
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Shelby - W Stage Coach Trail
+    latitude: 35.415817
+    longitude: -81.64505
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Shelby - Campbell St
+    latitude: 35.292324
+    longitude: -81.53526
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Shelby - Vale St
+    latitude: 35.306663
+    longitude: -81.524033
+    radius: 120
+    icon: mdi:store
+  - name: Dollar General Pacolet - S Pine St
+    latitude: 34.896877
+    longitude: -81.764191
+    radius: 120
+    icon: mdi:store
+
+# Spotify on the camper stereo (2026-10-25): the official Spotify app runs on the ODROID
+# (192.168.0.169) and its sound goes to the Jetson's Bluetooth speaker. HA controls it over
+# SSH with its own key (/config/.ssh/id_ed25519) via ~/.local/bin/camper-spotify there.
+# Spotify Premium = no commercials.
+shell_command:
+  camper_spotify: >-
+    ssh -i /config/.ssh/id_ed25519 -o UserKnownHostsFile=/config/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=5 morris@192.168.0.169 ".local/bin/camper-spotify {{ cmd }}"
+
+command_line:
+  # Fishing page (2026-10-25): rating, feeding windows and moon from
+  # /config/fishing/fishing_solunar.py, fed the live pressure trend and wind every 5 min.
+  - sensor:
+      name: Fishing Forecast
+      unique_id: fishing_forecast
+      icon: mdi:fish
+      command: >-
+        python3 /config/fishing/fishing_solunar.py
+        {{ state_attr('zone.home', 'latitude') }} {{ state_attr('zone.home', 'longitude') }} America/New_York
+        "{{ states('sensor.pressure_trend') }}"
+        {{ ((state_attr('weather.forecast_home', 'wind_speed') | float(0)) * (0.621 if state_attr('weather.forecast_home', 'wind_speed_unit') == 'km/h' else 1)) | round(0) }}
+      value_template: "{{ value_json.rating }}"
+      json_attributes: [score, reasons, now_text, in_window, rows, tomorrow_majors, tomorrow_rating, phase, illumination, day_rating, moon_icon, trend, wind_mph]
+      scan_interval: 300
+      command_timeout: 30
+  - sensor:
+      name: Camper Spotify
+      unique_id: camper_spotify_status
+      icon: mdi:spotify
+      command: >-
+        ssh -i /config/.ssh/id_ed25519 -o UserKnownHostsFile=/config/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=5 morris@192.168.0.169 ".local/bin/camper-spotify status"
+      value_template: "{{ value_json.state | default('off') }}"
+      json_attributes: [title, artist, art, volume, playlist_uri, playlist]
+      scan_interval: 10
+      command_timeout: 15

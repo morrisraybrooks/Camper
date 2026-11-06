@@ -1,0 +1,2544 @@
+- id: smart_auto_to_heat
+  alias: 'Smart Auto: Switch to Heat'
+  mode: single
+  triggers:
+  - trigger: template
+    value_template: "{% set e = 'climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'
+      %} {{ is_state('input_boolean.camper_smart_auto', 'on') and is_state(e, 'cool')\n
+      \  and (state_attr(e, 'current_temperature') | float(99)) <= (states('input_number.camper_smart_heat_to')
+      | float(68)) - 2 }}"
+    for: 00:10:00
+  # Re-check when the 1-hour lockout ends; the trigger above only fires once
+  - trigger: template
+    value_template: '{{ (now() - states.climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate.last_changed)
+      > timedelta(hours=1) }}'
+  conditions:
+  - condition: template
+    value_template: '{{ (now() - states.climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate.last_changed)
+      > timedelta(hours=1) }}'
+  - condition: template
+    value_template: "{% set e = 'climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'
+      %} {{ is_state('input_boolean.camper_smart_auto', 'on') and is_state(e, 'cool')\n
+      \  and (state_attr(e, 'current_temperature') | float(99)) <= (states('input_number.camper_smart_heat_to')
+      | float(68)) - 2 }}"
+  actions:
+  - action: script.camper_smart_auto_apply
+    data:
+      mode: heat
+      reason: it dropped to {{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature')
+        }}°F
+- id: smart_auto_to_cool
+  alias: 'Smart Auto: Switch to Cool'
+  mode: single
+  triggers:
+  - trigger: template
+    value_template: "{% set e = 'climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'
+      %} {{ is_state('input_boolean.camper_smart_auto', 'on') and is_state(e, 'heat')\n
+      \  and (state_attr(e, 'current_temperature') | float(0)) >= (states('input_number.camper_smart_cool_to')
+      | float(72)) + 1 }}"
+    for: 00:10:00
+  # Re-check when the 1-hour lockout ends; the trigger above only fires once
+  - trigger: template
+    value_template: '{{ (now() - states.climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate.last_changed)
+      > timedelta(hours=1) }}'
+  conditions:
+  - condition: template
+    value_template: '{{ (now() - states.climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate.last_changed)
+      > timedelta(hours=1) }}'
+  - condition: template
+    value_template: "{% set e = 'climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'
+      %} {{ is_state('input_boolean.camper_smart_auto', 'on') and is_state(e, 'heat')\n
+      \  and (state_attr(e, 'current_temperature') | float(0)) >= (states('input_number.camper_smart_cool_to')
+      | float(72)) + 1 }}"
+  actions:
+  - action: script.camper_smart_auto_apply
+    data:
+      mode: cool
+      reason: it rose to {{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature')
+        }}°F
+- id: smart_auto_replace_thermostat_auto
+  alias: 'Smart Auto: Replace Thermostat Auto Mode'
+  triggers:
+  - trigger: state
+    entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+    to: auto
+    for: 00:00:30
+  - trigger: state
+    entity_id: input_boolean.camper_smart_auto
+    to: 'on'
+  conditions:
+  - condition: state
+    entity_id: input_boolean.camper_smart_auto
+    state: 'on'
+  - condition: template
+    value_template: '{{ states(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'')
+      in [''auto'', ''cool'', ''heat''] }}'
+  actions:
+  - variables:
+      cur: '{{ state_attr(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''current_temperature'')
+        | float(72) }}'
+      mid: '{{ ((states(''input_number.camper_smart_heat_to'') | float(68)) + (states(''input_number.camper_smart_cool_to'')
+        | float(72))) / 2 }}'
+  - action: script.camper_smart_auto_apply
+    data:
+      mode: '{{ ''cool'' if cur >= mid else ''heat'' }}'
+      reason: "{{ 'Auto was turned on at the thermostat - Smart Auto runs it in one
+        mode so heat and A/C cannot fight'\n   if trigger.entity_id.startswith('climate')
+        else 'Smart Auto was turned on' }} ({{ cur | int }}°F inside)"
+- id: smart_auto_setpoint_changed
+  alias: 'Smart Auto: Setpoint Changed'
+  description: Sends the Heat to / Cool to setpoints to the thermostat - the one
+    for Cool or Heat, or both in the thermostat's own Auto (2026-10-11). Each one
+    stays where it is set; cool may equal heat (72/72), and only if cool would
+    go below heat does the other one move to match.
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id:
+    - input_number.camper_smart_heat_to
+    - input_number.camper_smart_cool_to
+  - trigger: state
+    entity_id: input_boolean.camper_smart_auto
+    to: 'on'
+  actions:
+  - variables:
+      h: '{{ states(''input_number.camper_smart_heat_to'') | int(68) }}'
+      c: '{{ states(''input_number.camper_smart_cool_to'') | int(72) }}'
+      auto: '{{ is_state(''input_boolean.camper_smart_auto'', ''on'') }}'
+      keep_heat: "{{ is_state('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate',
+        'heat')\n   if trigger.entity_id == 'input_boolean.camper_smart_auto'\n   else
+        trigger.entity_id == 'input_number.camper_smart_heat_to' }}"
+      other: '{{ ''input_number.camper_smart_cool_to'' if keep_heat else ''input_number.camper_smart_heat_to''
+        }}'
+      new: '{{ h if keep_heat else c }}'
+  - if:
+    - condition: template
+      value_template: '{{ c < h }}'
+    then:
+    - action: input_number.set_value
+      target:
+        entity_id: '{{ other }}'
+      data:
+        value: '{{ new }}'
+    - stop: gap fixed - the change above re-runs this automation
+  - delay: 00:00:03
+  - variables:
+      m: '{{ states(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'') }}'
+      want: '{{ c if m == ''cool'' else (h if m == ''heat'' else none) }}'
+  - if:
+    - condition: template
+      value_template: '{{ m == ''auto'' }}'
+    then:
+    - condition: template
+      value_template: '{{ state_attr(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''target_temp_low'')
+        != h or state_attr(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''target_temp_high'')
+        != c }}'
+    - action: climate.set_temperature
+      target:
+        entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+      data:
+        target_temp_low: '{{ h }}'
+        target_temp_high: '{{ c }}'
+    - stop: Auto setpoints sent
+  - condition: template
+    value_template: '{{ want is not none and want != state_attr(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''temperature'')
+      }}'
+  - action: climate.set_temperature
+    target:
+      entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+    data:
+      temperature: '{{ want }}'
+- id: smart_auto_sync_from_thermostat
+  alias: 'Thermostat: Sync Setpoint From Wall'
+  description: Copies setpoints changed at the wall panel / app into Heat to / Cool
+    to - Cool or Heat's one setpoint, or both of the thermostat's own Auto
+    setpoints (2026-10-11).
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+    attribute: temperature
+    for: 00:00:10
+  - trigger: state
+    entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+    attribute: target_temp_low
+    for: 00:00:10
+  - trigger: state
+    entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+    attribute: target_temp_high
+    for: 00:00:10
+  conditions:
+  - condition: template
+    value_template: "{{ (now() - states.input_number.camper_smart_heat_to.last_changed).total_seconds()
+      > 30\n   and (now() - states.input_number.camper_smart_cool_to.last_changed).total_seconds()
+      > 30\n   and state_attr('automation.smart_auto_setpoint_changed', 'current')
+      | int(0) == 0 }}"
+  - condition: template
+    value_template: "{% set e = 'climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'
+      %} {% set t = state_attr(e, 'temperature') %} {% set m = states(e) %}
+      {% set lo = state_attr(e, 'target_temp_low') %} {% set hi = state_attr(e, 'target_temp_high') %}
+      {{ (t is number and ((m == 'cool' and t != states('input_number.camper_smart_cool_to')
+      | int) or (m == 'heat' and t != states('input_number.camper_smart_heat_to') | int)))
+      or (m == 'auto' and lo is number and hi is number and (lo != states('input_number.camper_smart_heat_to')
+      | int or hi != states('input_number.camper_smart_cool_to') | int)) }}"
+  actions:
+  - if:
+    - condition: state
+      entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+      state: auto
+    then:
+    - action: script.camper_thermostat_set_pair
+      data:
+        heat: '{{ state_attr(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''target_temp_low'')
+          | int }}'
+        cool: '{{ state_attr(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''target_temp_high'')
+          | int }}'
+    else:
+    - action: input_number.set_value
+      target:
+        entity_id: '{{ ''input_number.camper_smart_cool_to'' if is_state(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''cool'')
+          else ''input_number.camper_smart_heat_to'' }}'
+      data:
+        value: '{{ state_attr(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''temperature'')
+          }}'
+- id: alarmo_triggered_snapshot_notify
+  alias: 'Alarmo: Triggered - Notify'
+  description: When Alarmo alarm is triggered, send notification
+  trigger:
+  - platform: state
+    entity_id: alarm_control_panel.alarmo
+    to: triggered
+  action:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "ALARM TRIGGERED!. Alarmo alarm has been triggered at {{ now().strftime(\"%I:%M %p\") }}!"
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: "\U0001F6A8 ALARM TRIGGERED!"
+      message: Alarmo alarm has been triggered at {{ now().strftime("%I:%M %p") }}!
+      data:
+        priority: high
+        ttl: 0
+        channel: Alarm
+        tag: alarmo_triggered
+- id: alarmo_armed_away_arm_arlo
+  alias: 'Alarmo: Armed Away Notification'
+  description: When Alarmo is armed away, send notification
+  trigger:
+  - platform: state
+    entity_id: alarm_control_panel.alarmo
+    to: armed_away
+  action:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Alarmo Armed Away. Alarmo is now armed in Away mode at {{ now().strftime(\"%I:%M %p\") }}"
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: "\U0001F6E1️ Alarmo Armed Away"
+      message: Alarmo is now armed in Away mode at {{ now().strftime("%I:%M %p") }}
+      data:
+        priority: high
+        ttl: 0
+        channel: Alarm
+        tag: alarmo_armed_away
+- id: alarmo_armed_home_arm_arlo
+  alias: 'Alarmo: Armed Home Notification'
+  description: When Alarmo is armed home, send notification
+  trigger:
+  - platform: state
+    entity_id: alarm_control_panel.alarmo
+    to: armed_home
+  action:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Alarmo Armed Home. Alarmo is now armed in Home mode at {{ now().strftime(\"%I:%M %p\") }}"
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: "\U0001F3E0 Alarmo Armed Home"
+      message: Alarmo is now armed in Home mode at {{ now().strftime("%I:%M %p") }}
+      data:
+        priority: high
+        ttl: 0
+        channel: Alarm
+        tag: alarmo_armed_home
+- id: alarmo_disarmed_disarm_arlo
+  alias: 'Alarmo: Disarmed Notification'
+  description: When Alarmo is disarmed, send notification
+  trigger:
+  - platform: state
+    entity_id: alarm_control_panel.alarmo
+    to: disarmed
+  action:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Alarmo Disarmed. Alarmo has been disarmed at {{ now().strftime(\"%I:%M %p\") }}"
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: ✅ Alarmo Disarmed
+      message: Alarmo has been disarmed at {{ now().strftime("%I:%M %p") }}
+      data:
+        priority: normal
+        channel: Alarm
+        tag: alarmo_disarmed
+- id: alarmo_armed_night_arm_arlo
+  alias: 'Alarmo: Armed Night Notification'
+  description: When Alarmo is armed night, send notification
+  trigger:
+  - platform: state
+    entity_id: alarm_control_panel.alarmo
+    to: armed_night
+  action:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Alarmo Armed Night. Alarmo is now armed in Night mode at {{ now().strftime(\"%I:%M %p\") }}"
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: "\U0001F319 Alarmo Armed Night"
+      message: Alarmo is now armed in Night mode at {{ now().strftime("%I:%M %p")
+        }}
+      data:
+        priority: high
+        ttl: 0
+        channel: Alarm
+        tag: alarmo_armed_night
+- id: keurig_auto_off_timer
+  alias: 'Keurig: Auto-Off After 30 Minutes'
+  description: Automatically turn off Keurig after 30 minutes for safety
+  trigger:
+  - platform: state
+    entity_id: switch.smart_switch_1
+    to: 'on'
+    for:
+      minutes: 30
+  action:
+  - service: switch.turn_off
+    target:
+      entity_id: switch.smart_switch_1
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Keurig Auto-Off. Keurig has been automatically turned off after 30 minutes for safety"
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: ☕ Keurig Auto-Off
+      message: Keurig has been automatically turned off after 30 minutes for safety
+      data:
+        priority: normal
+        channel: Keurig Safety
+- id: keurig_off_when_leaving
+  alias: 'Keurig: Turn Off When Leaving Home'
+  description: Turn off Keurig when you leave home for safety
+  # Geofence on the phone's GPS (2026-10-24): person.morris stays "home" ~10 min
+  # after he drives off because of the Wi-Fi ping tracker.
+  trigger:
+  - platform: zone
+    entity_id: device_tracker.sm_s906u
+    zone: zone.home
+    event: leave
+  condition:
+  - condition: state
+    entity_id: switch.smart_switch_1
+    state: 'on'
+  action:
+  - service: switch.turn_off
+    target:
+      entity_id: switch.smart_switch_1
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Keurig Turned Off. Keurig has been turned off because you left home"
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: ☕ Keurig Turned Off
+      message: Keurig has been turned off because you left home
+      data:
+        priority: normal
+        channel: Keurig Safety
+- id: aqara_motion_alert_when_away
+  alias: 'Aqara: Motion Alert When Away From Home'
+  description: Send security alert when Aqara sensor detects motion while you are
+    away
+  trigger:
+  - platform: state
+    entity_id: binary_sensor.lumi_lumi_sensor_motion_aq2
+    to: 'on'
+  condition:
+  - condition: template
+    value_template: "{{ states('person.morris') not in ['home', 'unknown', 'unavailable']\n
+      \  and states('person.nadine') not in ['home', 'unknown', 'unavailable'] }}"
+  - condition: state
+    entity_id: input_boolean.camper_away_mode
+    state: 'on'
+  action:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F6A8 Motion inside the camper"
+      message: The motion sensor saw movement at {{ now().strftime("%-I:%M %p") }}
+        while you are both away.
+      urgent: true
+- id: aqara_battery_low_alert
+  alias: 'Aqara: Low Battery Warning'
+  description: Alert when Aqara motion sensor battery is low
+  trigger:
+  - platform: numeric_state
+    entity_id: sensor.lumi_lumi_sensor_motion_aq2_battery
+    below: 20
+  action:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Aqara Sensor Battery Low. Aqara motion sensor battery is at {{ states(\"sensor.lumi_lumi_sensor_motion_aq2_battery\") }}%. Replace battery soon to maintain security coverage."
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: "\U0001F50B Aqara Sensor Battery Low"
+      message: Aqara motion sensor battery is at {{ states("sensor.lumi_lumi_sensor_motion_aq2_battery")
+        }}%. Replace battery soon to maintain security coverage.
+      data:
+        priority: normal
+        channel: Maintenance Alerts
+- id: aqara_welcome_home_notification
+  alias: 'Aqara: Welcome Home Notification'
+  description: Notify when arriving home and motion detected (confirms sensor is working)
+  trigger:
+  - platform: state
+    entity_id: binary_sensor.lumi_lumi_sensor_motion_aq2
+    to: 'on'
+  condition:
+  - condition: state
+    entity_id: person.morris
+    state: home
+  - condition: template
+    value_template: '{{ (as_timestamp(now()) - as_timestamp(states.person.morris.last_changed))
+      < 300 }}'
+  action:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Welcome Home. Motion detected - welcome back! Aqara sensor is active and monitoring."
+        media_stream: alarm_stream
+  - action: notify.send_message
+    target:
+      entity_id: notify.sm_s906u
+    data:
+      title: "\U0001F3E0 Welcome Home"
+      message: Motion detected - welcome back! Aqara sensor is active and monitoring.
+      data:
+        priority: low
+        channel: Home Status
+- id: camper_awning_auto_retract
+  alias: Camper - Auto-Retract Awning (Rain / Wind)
+  description: Retracts the awning on rain, or on measured wind above 10 mph for 20 s
+    (only if the optional anemometer is fitted). The firmware's own shake-based
+    wind retract (Wind Auto-Retract switch) works without it. Entity IDs follow
+    the ESPHome naming for the camper-awning-weather device - check them after
+    adoption.
+  mode: single
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.camper_awning_camper_awning_rain_detected
+    to: 'on'
+    id: rain
+  - trigger: numeric_state
+    entity_id: sensor.camper_awning_camper_awning_wind_speed
+    above: 10
+    for: 00:00:20
+    id: wind
+  conditions:
+  - condition: template
+    value_template: "{{ states('cover.awning') in ['open', 'opening'] }}"
+  actions:
+  - action: cover.close_cover
+    target:
+      entity_id: cover.awning
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F3D5️ Awning auto-retracted"
+      message: >-
+        {{ 'Rain detected.' if trigger.id == 'rain' else 'Wind at ' ~
+        states('sensor.camper_awning_camper_awning_wind_speed') ~ ' mph.' }}
+- id: camper_awning_problem_alert
+  alias: Camper - Awning Problem / Wind Alert
+  description: 'The awning controller reports "Problem: ..." when it stops a stuck,
+    stalled or too-long run, and "Wind: auto-retracting" when it pulls the awning
+    in on its own.'
+  mode: queued
+  triggers:
+  - trigger: state
+    entity_id: sensor.camper_awning_camper_awning_status
+  conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.to_state is not none and
+      (trigger.to_state.state.startswith('Problem') or
+      trigger.to_state.state.startswith('Wind')) }}
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F3D5️ Awning: {{ trigger.to_state.state }}"
+      message: Check the awning. The controller stopped or retracted it on its own.
+      urgent: "{{ trigger.to_state.state.startswith('Problem') }}"
+- id: camper_awning_retract_from_notification
+  alias: Camper - Retract Awning (notification button)
+  description: Handles the "Retract awning" button on the storm and weather alerts.
+  mode: single
+  triggers:
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: RETRACT_AWNING
+  conditions:
+  - condition: template
+    value_template: "{{ states('cover.awning') in ['open', 'opening'] }}"
+  actions:
+  - action: cover.close_cover
+    target:
+      entity_id: cover.awning
+- id: camper_thermostat_watchdog
+  alias: 'Camper: Thermostat Watchdog'
+  mode: single
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.thermostat_problem
+    to: 'on'
+  actions:
+  - action: homeassistant.reload_config_entry
+    data:
+      entry_id: 01M22Q9RRZ3A7V8WV3GZJTPW02
+    continue_on_error: true
+  - wait_template: '{{ is_state(''binary_sensor.thermostat_problem'', ''off'') }}'
+    timeout: 00:05:00
+  - if:
+    - condition: state
+      entity_id: binary_sensor.thermostat_problem
+      state: 'on'
+    then:
+    - action: script.camper_notify_both
+      data:
+        title: "\U0001F321️ Thermostat not responding"
+        message: HA lost the EasyTouch thermostat and reconnecting didn't fix it.
+          If the Micro-Air app is open on a phone, close it (the thermostat only allows
+          one connection). If it still won't come back, restart Home Assistant.
+        urgent: true
+    - wait_for_trigger:
+      - trigger: state
+        entity_id: binary_sensor.thermostat_problem
+        to: 'off'
+      timeout: '12:00:00'
+    - if:
+      - condition: state
+        entity_id: binary_sensor.thermostat_problem
+        state: 'off'
+      then:
+      - action: script.camper_notify_both
+        data:
+          title: "\U0001F321️ Thermostat back online"
+          message: Home Assistant can control the thermostat again.
+- id: camper_inside_too_cold
+  alias: 'Camper: Inside Too Cold'
+  # Template trigger (2026-10-18): also arms when the alert number is changed, so
+  # setting the alert past the current temperature works as a test. A numeric_state
+  # trigger only fired on the temperature itself crossing the line.
+  triggers:
+  - trigger: template
+    value_template: "{{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature') | float(none) is number
+      and state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature') | float <
+      states('number.easytouch_f4_2d_c9_59_e5_52_low_temperature_alert') | float(-999) }}"
+    for: 00:10:00
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F976 Camper is {{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature')
+        }}°F inside"
+      message: Below the thermostat's {{ states('number.easytouch_f4_2d_c9_59_e5_52_low_temperature_alert')
+        | int('?') }}°F low alert - pipes and the dog. Check the heat.
+      urgent: true
+- id: camper_inside_too_hot
+  alias: 'Camper: Inside Too Hot'
+  # Template trigger (2026-10-18): also arms when the alert number is changed, so
+  # setting the alert past the current temperature works as a test. A numeric_state
+  # trigger only fired on the temperature itself crossing the line.
+  triggers:
+  - trigger: template
+    value_template: "{{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature') | float(none) is number
+      and state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature') | float >
+      states('number.easytouch_f4_2d_c9_59_e5_52_high_temperature_alert') | float(999) }}"
+    for: 00:10:00
+  actions:
+  # Daisy alone (2026-10-23): don't just alert - turn the ceiling fan on and put
+  # the A/C in Cool if it isn't already cooling, then say what was done.
+  - variables:
+      e: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+      alone: "{{ is_state('binary_sensor.daisy_home_alone', 'on') }}"
+      to_cool: "{{ alone and states(e) not in ['cool', 'auto'] }}"
+      cool_to: "{{ states('input_number.camper_smart_cool_to') | int(72) }}"
+      fixed: "{% if alone %}Daisy is alone, so I turned on the ceiling fan{{ ' and set the A/C to Cool at ' ~ cool_to ~ '°F' if to_cool else '' }}.{% endif %}"
+  - if:
+    - condition: template
+      value_template: '{{ alone }}'
+    then:
+    - action: input_select.select_option
+      continue_on_error: true
+      target:
+        entity_id: input_select.camper_ceiling_fan_mode
+      data:
+        option: Stay On
+    - if:
+      - condition: template
+        value_template: '{{ to_cool }}'
+      then:
+      - action: climate.set_hvac_mode
+        continue_on_error: true
+        target:
+          entity_id: '{{ e }}'
+        data:
+          hvac_mode: cool
+      - delay: 00:00:08
+      - action: climate.set_temperature
+        continue_on_error: true
+        target:
+          entity_id: '{{ e }}'
+        data:
+          temperature: '{{ cool_to }}'
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F975 Camper is {{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature')
+        }}°F inside"
+      message: Above the thermostat's {{ states('number.easytouch_f4_2d_c9_59_e5_52_high_temperature_alert')
+        | int('?') }}°F high alert - check on the dog and the A/C.{{ ' ' ~ fixed if fixed else '' }}
+      urgent: true
+- id: camper_nws_alert
+  alias: 'Camper: Severe Weather Alert (NWS)'
+  mode: queued
+  triggers:
+  - trigger: state
+    entity_id: sensor.nws_alert_headline
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.state not in ['None', 'unknown', 'unavailable',
+      '']\n   and trigger.from_state is not none\n   and trigger.to_state.state !=
+      trigger.from_state.state }}"
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: ⚠️ {{ states('sensor.nws_alerts') }}
+      message: '{{ trigger.to_state.state }}'
+      urgent: '{{ ''Warning'' in states(''sensor.nws_alerts'') or ''Emergency'' in
+        states(''sensor.nws_alerts'') }}'
+      actions: "{{ [{'action': 'RETRACT_AWNING', 'title': 'Retract awning'}] if states('cover.awning') in ['open', 'opening'] else [] }}"
+- id: camper_everyone_left
+  alias: 'Camper: Everyone Left - Power Down'
+  # Geofence on both phones' GPS (2026-10-24), no wait: the person entities stay
+  # "home" ~10 min after leaving because of the Wi-Fi ping trackers.
+  # device_tracker.home is Nadine's phone GPS.
+  triggers:
+  - trigger: zone
+    entity_id:
+    - device_tracker.sm_s906u
+    - device_tracker.home
+    zone: zone.home
+    event: leave
+  conditions:
+  - condition: template
+    value_template: "{{ states('device_tracker.sm_s906u') not in ['home', 'unknown', 'unavailable']
+      and states('device_tracker.home') not in ['home', 'unknown', 'unavailable'] }}"
+  - condition: state
+    entity_id: input_boolean.camper_away_mode
+    state: 'off'
+  actions:
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.camper_away_mode
+  - action: switch.turn_off
+    target:
+      entity_id: switch.smart_switch_1
+    continue_on_error: true
+  # Nobody home: no running water pump (a split fitting floods the floor) and
+  # no gas water heater burning unwatched. Climate stays on for Daisy.
+  - action: switch.turn_off
+    target:
+      entity_id:
+      - switch.camper_wall_panel_camper_wall_panel_water_pump
+      - switch.camper_wall_panel_camper_wall_panel_water_heater_gas
+    continue_on_error: true
+  - action: script.camper_dog_tv
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F690 Camper set to Away"
+      message: You're both out. Coffee pot, water pump and water heater are off. Heat/A/C, ceiling fan and TV stay
+        on for the dog{% if is_state('media_player.bedroom_50_hisense_roku_tv','playing')
+        %} (TV is playing){% endif %}.
+- id: camper_someone_back
+  alias: 'Camper: Someone Back - Clear Away Mode'
+  triggers:
+  - trigger: state
+    entity_id:
+    - person.morris
+    - person.nadine
+    to: home
+  conditions:
+  - condition: state
+    entity_id: input_boolean.camper_away_mode
+    state: 'on'
+  actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.camper_away_mode
+- id: camper_high_humidity
+  alias: 'Camper: High Humidity Warning'
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.lumi_lumi_weather_humidity
+    above: 60
+    for: 02:00:00
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F4A7 Humidity {{ states('sensor.lumi_lumi_weather_humidity') |
+        round(0) }}% inside"
+      message: >-
+        Over 60% for 2 hours - mold risk.
+        {% if is_state('binary_sensor.dehumidifier_tank_full', 'on') %}The dehumidifier's tank is FULL - empty it or check the drain hose.
+        {% elif is_state('humidifier.midea_dehumidifier', 'off') %}The dehumidifier is OFF - turn it on from the Climate page.
+        {% elif is_state('humidifier.midea_dehumidifier', 'on') %}The dehumidifier is on but can't keep up - check its drain hose and that it's blowing air.
+        {% else %}Crack a window, run the vent fan, or put the A/C on Dry.{% endif %}
+- id: camper_health_internet
+  alias: 'Camper Health: Internet Back After Outage'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.internet
+    from: 'off'
+    to: 'on'
+  conditions:
+  - condition: template
+    value_template: '{{ (now() - trigger.from_state.last_changed) > timedelta(minutes=5)
+      }}'
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F310 Internet was down"
+      message: Out from {{ as_local(trigger.from_state.last_changed).strftime('%-I:%M
+        %p') }} to {{ now().strftime('%-I:%M %p') }} ({{ ((now() - trigger.from_state.last_changed).total_seconds()
+        / 60) | round(0) | int }} min).
+- id: camper_health_brain
+  alias: 'Camper Health: Camper Brain Offline'
+  triggers:
+  - trigger: template
+    value_template: '{{ not is_state(''sensor.camper_brain_status'', ''ok'') }}'
+    for: 00:10:00
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F9E0 Camper Brain is offline"
+      message: Voice/AI control isn't working. Check the Jetson (192.168.0.173) is
+        powered on.
+- id: camper_health_backup
+  alias: 'Camper Health: Backup Overdue'
+  triggers:
+  - trigger: template
+    value_template: '{% set b = as_datetime(states(''sensor.backup_last_successful_automatic_backup''))
+      %} {{ b is not none and (now() - b) > timedelta(hours=30) }}'
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F4BE Home Assistant backup overdue"
+      message: No successful automatic backup since {{ as_local(as_datetime(states('sensor.backup_last_successful_automatic_backup'))).strftime('%b
+        %-d %-I:%M %p') }}. Check Settings → System → Backups.
+- id: camper_health_disk
+  alias: 'Camper Health: Pi Disk Almost Full'
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.system_monitor_disk_usage
+    above: 85
+    for: 00:30:00
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F4BD Home Assistant disk {{ states('sensor.system_monitor_disk_usage')
+        | round(0) }}% full"
+      message: The Pi's drive is nearly full. Old backups or the history database
+        may need trimming.
+- id: camper_health_pi_hot
+  alias: 'Camper Health: Pi Overheating'
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.system_monitor_processor_temperature
+    above: 176
+    for: 00:10:00
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F525 Home Assistant Pi is hot"
+      message: CPU at {{ states('sensor.system_monitor_processor_temperature') | round(0)
+        }}°F. Make sure it has airflow - it's slowing itself down.
+- id: camper_hvac_not_keeping_up
+  alias: 'Camper: A/C or Heat Not Keeping Up'
+  triggers:
+  - trigger: template
+    value_template: "{% set m = states('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate')
+      %} {% set cur = state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature')
+      %} {% set sp = state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','temperature')
+      %} {{ cur is number and sp is number and\n   ((m == 'cool' and cur >= sp + 3)
+      or (m == 'heat' and cur <= sp - 3)) }}"
+    for: 00:30:00
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "{{ '\U0001F975 A/C' if is_state('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','cool')
+        else '\U0001F976 Heat' }} isn't keeping up"
+      message: It's {{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature')
+        }}°F inside but set to {{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','temperature')
+        }}°F, and it's been that way 30 minutes. Check on the dog and the {{ 'A/C'
+        if is_state('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','cool')
+        else 'furnace' }}.
+      urgent: true
+- id: camper_power_out
+  alias: 'Camper: Power Out'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.camper_power_out
+    from: 'off'
+    to: 'on'
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: ⚡ Power is out at the camper
+      message: The smart plugs and TV all dropped off - the A/C is probably off. Check
+        on the dog.
+      urgent: true
+- id: camper_power_back
+  alias: 'Camper: Power Back'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.camper_power_out
+    from: 'on'
+    to: 'off'
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: ⚡ Power is back at the camper
+      message: Out for {{ ((now() - trigger.from_state.last_changed).total_seconds()
+        / 60) | round(0) | int }} min. Make sure the A/C came back on.
+- id: camper_morning_summary
+  alias: 'Camper: Morning Summary'
+  # 2026-10-23: Morris sleeps 6 AM-1 PM, so his copy comes at 1 PM. Nadine's is
+  # unchanged at 8 AM (same text as camper_notify_both sent her).
+  triggers:
+  - trigger: time
+    at: 08:00:00
+    id: nadine
+  - trigger: time
+    at: '13:00:00'
+    id: morris
+  actions:
+  - action: weather.get_forecasts
+    target:
+      entity_id: weather.forecast_home
+    data:
+      type: daily
+    response_variable: fc
+    continue_on_error: true
+  - variables:
+      today: '{{ fc[''weather.forecast_home''].forecast[0] if fc is defined and fc[''weather.forecast_home'']
+        is defined else none }}'
+      problems: '{% set p = [] %} {% if is_state(''binary_sensor.thermostat_problem'',''on'')
+        %}{% set p = p + [''thermostat offline''] %}{% endif %} {% if not is_state(''sensor.nws_alerts'',''None'')
+        %}{% set p = p + [states(''sensor.nws_alerts'')] %}{% endif %} {% if not is_state(''sensor.camper_brain_status'',''ok'')
+        %}{% set p = p + [''Camper Brain offline''] %}{% endif %} {% if is_state(''binary_sensor.internet'',''off'')
+        %}{% set p = p + [''internet down''] %}{% endif %} {{ p | join('', '') }}'
+  - variables:
+      title: ☀️ Good morning
+      message: '{% if today %}Today: {{ today.condition | replace(''partlycloudy'',''partly
+        cloudy'') | replace(''-'','' '') }}, high {{ today.temperature | round(0)
+        }}° / low {{ today.templow | round(0) }}°{% if today.precipitation_probability
+        is defined and today.precipitation_probability %}, {{ today.precipitation_probability
+        }}% rain{% endif %}. {% endif %}Inside {{ state_attr(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'',''current_temperature'')
+        }}°F, {{ states(''sensor.lumi_lumi_weather_humidity'') | round(0) }}% humidity.
+        Thermostat: {{ states(''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'')
+        }} at {% set c = ''climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate'' %}{{
+        state_attr(c,''temperature'') if state_attr(c,''temperature'') is not none else
+        state_attr(c,''target_temp_low'') ~ ''-'' ~ state_attr(c,''target_temp_high'') }}°F. {{ ''All systems OK.'' if not problems else ''⚠️ '' ~ problems }}'
+  - variables:
+      tts: "{{ (title ~ '. ' ~ message) | replace('°', ' degrees') | regex_replace('[^ -~]', '') }}"
+  - if:
+    - condition: trigger
+      id: morris
+    then:
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        message: TTS
+        data:
+          priority: high
+          tts_text: '{{ tts }}'
+          media_stream: alarm_stream
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        title: '{{ title }}'
+        message: '{{ message }}'
+        data:
+          priority: high
+    else:
+    - action: notify.mobile_app_home
+      continue_on_error: true
+      data:
+        message: TTS
+        data:
+          tts_text: '{{ tts }}'
+          media_stream: alarm_stream
+    - action: notify.mobile_app_home
+      continue_on_error: true
+      data:
+        title: '{{ title }}'
+        message: '{{ message }}'
+- id: care_daily_digest
+  alias: 'Care: Daily Due Reminder (2:15 PM)'
+  triggers:
+  - trigger: time
+    at: '14:15:00'
+  actions:
+  - variables:
+      due: "{% from 'camper_tasks.jinja' import task_status %} {{ task_status() |
+        from_json | selectattr('days_left', 'le', 0) | list\n   + (task_status('Daisy')
+        | from_json | selectattr('days_left', 'eq', 1) | list) }}"
+  - condition: template
+    value_template: '{{ due | count > 0 }}'
+  - variables:
+      msg: "{% from 'camper_tasks.jinja' import due_text %} {% for t in due %}{{ '\U0001F436
+        ' if t.group == 'Daisy' else '\U0001F527 ' }}{{ t.name }} - {{ due_text(t.days_left)
+        }} {% endfor %}"
+      payload:
+        title: "{{ '\U0001F436 Daisy & camper care' if due | selectattr('group','eq','Daisy')
+          | list else '\U0001F527 Camper upkeep due' }}"
+        message: '{{ msg | trim }}'
+        data:
+          actions: '{% set ns = namespace(a=[]) %} {% for t in due[:3] %}{% set ns.a
+            = ns.a + [{''action'': ''TASK_DONE_'' ~ t.id, ''title'': ''✓ '' ~ t.name[:18]}]
+            %}{% endfor %} {{ ns.a }}'
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "{{ (payload.title ~ '. ' ~ payload.message) | replace('\u00b0', ' degrees') | regex_replace('[^ -~]', '') }}"
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data: "{{ dict(payload, data=dict(payload.data | default({}), priority='high')) }}"
+  - action: notify.mobile_app_home
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        tts_text: "{{ (payload.title ~ '. ' ~ payload.message) | replace('\u00b0', ' degrees') | regex_replace('[^ -~]', '') }}"
+        media_stream: alarm_stream
+  - action: notify.mobile_app_home
+    continue_on_error: true
+    data: '{{ payload }}'
+- id: care_task_done_button
+  alias: 'Care: Task Done (button)'
+  mode: queued
+  triggers:
+  - trigger: event
+    event_type: mobile_app_notification_action
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.event.data.action is string and trigger.event.data.action.startswith(''TASK_DONE_'')
+      }}'
+  actions:
+  - action: script.camper_task_done
+    data:
+      task: '{{ trigger.event.data.action[10:] }}'
+- id: care_daisy_alone_4h
+  alias: 'Care: Daisy Alone 4 Hours'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.daisy_home_alone
+    to: 'on'
+    for: 04:00:00
+  actions:
+  - action: notify.mobile_app_home
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        tts_text: "Daisy has been alone 4 hours. Since {{ as_local(states.binary_sensor.daisy_home_alone.last_changed).strftime('%-I:%M %p') }}. Inside is {{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature') }} degreesF."
+        media_stream: alarm_stream
+  - action: notify.mobile_app_home
+    data:
+      title: "\U0001F436 Daisy has been alone 4 hours"
+      message: Since {{ as_local(states.binary_sensor.daisy_home_alone.last_changed).strftime('%-I:%M
+        %p') }}. Inside is {{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate','current_temperature')
+        }}°F.
+- id: care_late_for_work
+  alias: 'Schedule: Still Home - Late for Work?'
+  triggers:
+  - trigger: time
+    at: '15:05:00'
+    id: first
+  - trigger: time
+    at: '15:10:00'
+    id: second
+  conditions:
+  - condition: template
+    value_template: "{{ now().weekday() in [6, 0, 1, 2]\n   or (now().weekday() ==
+      3 and is_state('input_boolean.camper_overtime_thursday', 'on')) }}"
+  # The phone's GPS tracker, not person.morris: the ping tracker on person.morris
+  # keeps him "home" for 10 min (consider_home 600) after he drives off.
+  - condition: state
+    entity_id: device_tracker.sm_s906u
+    state: home
+  # Still in the home zone but already driving off (2026-10-24): on 10/22 the
+  # phone was pulling out at 22 mph at 3:09:54 and the 3:10 alert still went out.
+  # speed is m/s; 3 m/s is about 7 mph.
+  - condition: template
+    value_template: "{{ state_attr('device_tracker.sm_s906u', 'speed') | float(0) < 3 }}"
+  actions:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        ttl: 0
+        tts_text: "It's {{ now().strftime('%-I:%M') }}. {{ 'Time to go to work. You need to leave now.' if trigger.id == 'first' else 'You are still home. You are going to be late.' }}"
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    data:
+      title: >-
+        {{ ("⏰ " if trigger.id == "first" else "🚨 ") ~ now().strftime("%-I:%M") ~ " - "
+           ~ ("Time to go!" if trigger.id == "first" else "You're going to be late!") }}
+      message: >-
+        {{ "It's " ~ now().strftime("%-I:%M") ~ ". "
+           ~ ("Time to go, you need to leave now." if trigger.id == "first"
+              else "You're still home. You're going to be late.") }}
+      data:
+        priority: high
+        ttl: 0
+- id: ceiling_fan_auto_temperature_control
+  alias: 'Ceiling Fan: Auto Temperature Control'
+  description: Turn the ceiling fan on above the threshold temperature and off 2°F
+    below it. Only while Ceiling Fan Mode is Auto (Stay On / Stay Off override it).
+    Unlocking doesn't trigger it - the fan stays as it is until the next temperature
+    reading.
+  trigger:
+  - platform: state
+    entity_id: sensor.lumi_lumi_weather_temperature
+  - platform: state
+    entity_id: input_number.camper_fan_temp_threshold
+  variables:
+    temp: '{{ states(''sensor.lumi_lumi_weather_temperature'') | float(0) }}'
+    threshold: '{{ states(''input_number.camper_fan_temp_threshold'') | float(78)
+      }}'
+  condition:
+  - condition: template
+    value_template: '{{ has_value(''sensor.lumi_lumi_weather_temperature'') }}'
+  - condition: state
+    entity_id: input_select.camper_ceiling_fan_mode
+    state: Auto
+  action:
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ temp > threshold }}'
+      - condition: state
+        entity_id: switch.ceiling_fan
+        state: 'off'
+      sequence:
+      - service: switch.turn_on
+        target:
+          entity_id: switch.ceiling_fan
+    - conditions:
+      - condition: template
+        value_template: '{{ temp < (threshold - 2) }}'
+      - condition: state
+        entity_id: switch.ceiling_fan
+        state: 'on'
+      sequence:
+      - service: switch.turn_off
+        target:
+          entity_id: switch.ceiling_fan
+- id: ceiling_fan_override
+  alias: 'Ceiling Fan: Override (Stay On / Stay Off)'
+  description: Ceiling Fan Mode dropdown. Stay On / Stay Off switch the fan and the
+    temperature automation leaves it alone until the mode goes back to Auto.
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: input_select.camper_ceiling_fan_mode
+    to:
+    - Stay On
+    - Stay Off
+  actions:
+  - action: "switch.turn_{{ 'on' if trigger.to_state.state == 'Stay On' else 'off' }}"
+    target:
+      entity_id: switch.ceiling_fan
+- id: ceiling_fan_locked_follow
+  alias: 'Ceiling Fan: Lock Follows a Tap'
+  description: While the fan is locked (Stay On / Stay Off), a person switching it
+    (dashboard tap, Kasa app, the plug's own button) moves the lock to match. Anything
+    an automation does (e.g. a camera gesture) is switched straight back, so the lock
+    wins. Gesture events from 2026-10-10 kept turning a locked-off fan on.
+  mode: queued
+  triggers:
+  - trigger: state
+    entity_id: switch.ceiling_fan
+    to:
+    - 'on'
+    - 'off'
+  variables:
+    mode: "{{ states('input_select.camper_ceiling_fan_mode') }}"
+    locked_state: "{{ 'on' if mode == 'Stay On' else 'off' }}"
+    by_person: '{{ trigger.to_state.context.parent_id is none }}'
+  conditions:
+  - condition: template
+    value_template: "{{ mode != 'Auto' and trigger.to_state.state != locked_state }}"
+  actions:
+  - if:
+    - condition: template
+      value_template: '{{ by_person }}'
+    then:
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.camper_ceiling_fan_mode
+      data:
+        option: "{{ 'Stay On' if trigger.to_state.state == 'on' else 'Stay Off' }}"
+    else:
+    - action: switch.turn_{{ locked_state }}
+      target:
+        entity_id: switch.ceiling_fan
+- id: presence_arrived_home_notify_both
+  # 2026-10-24: Morris only wants to hear about Nadine - when she leaves Child
+  # Care and when she gets home. No alert when Morris gets home, and nothing to
+  # Nadine's phone (she knows when she's home, and she's asleep when he gets in).
+  alias: 'Presence: Tell Morris When Nadine Leaves Work or Gets Home'
+  mode: queued
+  triggers:
+  - trigger: state
+    entity_id: person.nadine
+    to: home
+    for: 00:01:00
+    id: home
+  # Geofence: fires the moment she crosses out of the Child Care zone
+  - trigger: zone
+    entity_id: person.nadine
+    zone: zone.nadine_s_work
+    event: leave
+    id: left_work
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.id == ''left_work'' or trigger.from_state.state
+      not in [''unknown'', ''unavailable'', ''home''] }}'
+  # Ignore app reconnect blips: the tracker goes unavailable->home in the same
+  # second, so person flips not_home->home with ~0 s away (2026-10-23 5:38 AM).
+  - condition: template
+    value_template: '{{ trigger.id == ''left_work'' or (trigger.to_state.last_changed
+      - trigger.from_state.last_changed).total_seconds() > 60 }}'
+  actions:
+  - variables:
+      title: "{{ '\U0001F697 Nadine left work' if trigger.id == 'left_work' else '\U0001F3E0 Nadine is home' }}"
+      message: "{{ 'Nadine left Child Care' if trigger.id == 'left_work' else 'Nadine just got home' }} ({{ now().strftime('%-I:%M %p') }})."
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "{{ message }}"
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      title: "{{ title }}"
+      message: "{{ message }}"
+      data:
+        priority: high
+- id: schedule_wake_check
+  alias: 'Schedule: Are You Up? (2:15 PM)'
+  description: Backup for Morris's 2:00 PM phone alarm. On work days, if he's home
+    and the camper motion sensor hasn't seen anything since 1:30 PM, wake him up.
+  triggers:
+  - trigger: time
+    at: '14:15:00'
+  conditions:
+  - condition: template
+    value_template: "{{ now().weekday() in [6, 0, 1, 2]\n   or (now().weekday() ==
+      3 and is_state('input_boolean.camper_overtime_thursday', 'on')) }}"
+  - condition: state
+    entity_id: device_tracker.sm_s906u
+    state: home
+  # No motion since 1:30 PM. Unavailable sensor = no alert.
+  - condition: template
+    value_template: "{{ is_state('binary_sensor.lumi_lumi_sensor_motion_aq2', 'off')
+      and states.binary_sensor.lumi_lumi_sensor_motion_aq2.last_changed < today_at('13:30') }}"
+  actions:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        ttl: 0
+        tts_text: "Wake up Morris! It's {{ now().strftime('%-I:%M') }}. You have work tonight."
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    data:
+      title: "⏰ {{ now().strftime('%-I:%M') }} - Are you up?"
+      message: No movement in the camper since {{ as_local(states.binary_sensor.lumi_lumi_sensor_motion_aq2.last_changed).strftime('%-I:%M %p') }}. You have work tonight.
+      data:
+        priority: high
+        ttl: 0
+- id: schedule_work_reminder
+  alias: 'Schedule: Work Reminder (2:30 PM)'
+  triggers:
+  - trigger: time
+    at: '14:30:00'
+  conditions:
+  - condition: template
+    value_template: "{{ now().weekday() in [6, 0, 1, 2]\n   or (now().weekday() ==
+      3 and is_state('input_boolean.camper_overtime_thursday', 'on')) }}"
+  actions:
+  # 2026-10-23: add a low phone battery warning and the weather for the drive
+  # home (2-6 AM tomorrow, hourly forecast).
+  - action: weather.get_forecasts
+    continue_on_error: true
+    target:
+      entity_id: weather.forecast_home
+    data:
+      type: hourly
+    response_variable: hourly
+  - variables:
+      batt: "{{ states('sensor.morris_sm_s906u_battery_level') | int(100) }}"
+      phone: "{{ 'Your phone is at ' ~ batt ~ '%. Plug it in before you go.' if batt < 50 and not is_state('binary_sensor.morris_sm_s906u_is_charging', 'on') else '' }}"
+      drive: >-
+        {% set start = today_at('02:00') + timedelta(days=1) %}{% set end = start + timedelta(hours=4) %}
+        {% set ns = namespace(t=[], rain=false) %}
+        {% if hourly is defined and hourly['weather.forecast_home'] is defined %}
+        {% for f in hourly['weather.forecast_home'].forecast %}{% set d = as_local(as_datetime(f.datetime)) %}
+        {% if start <= d < end %}{% set ns.t = ns.t + [f.temperature | float] %}
+        {% if f.precipitation | float(0) > 0 or f.condition in ['rainy', 'pouring', 'snowy', 'snowy-rainy', 'lightning-rainy', 'hail'] %}{% set ns.rain = true %}{% endif %}
+        {% endif %}{% endfor %}{% endif %}
+        {% if ns.t %}{% set lo = ns.t | min | round(0) | int %}Drive home at 4 AM: {{ lo }}°{{ ' with rain' if ns.rain else '' }}.{{ ' Near freezing - watch for frost on the road.' if lo <= 34 else '' }}{{ ' Take a warm coat.' if lo < 45 else (' Take a jacket.' if lo < 60 else '') }}{% endif %}
+      # 2026-10-27: the 2:30 message is the daily update - time, weather and temp.
+      sky: >-
+        {{ {'sunny': 'Sunny', 'clear-night': 'Clear', 'partlycloudy': 'Partly cloudy', 'cloudy': 'Cloudy',
+            'rainy': 'Rain', 'pouring': 'Heavy rain', 'lightning': 'Thunder', 'lightning-rainy': 'Thunderstorms',
+            'fog': 'Fog', 'windy': 'Windy', 'windy-variant': 'Windy and cloudy', 'snowy': 'Snow',
+            'snowy-rainy': 'Sleet', 'hail': 'Hail'}.get(states('weather.forecast_home'), '') }}
+      now_temp: "{{ state_attr('weather.forecast_home', 'temperature') | round(0) | int if state_attr('weather.forecast_home', 'temperature') is number else '' }}"
+      update: "It's {{ now().strftime('%-I:%M %p') }}, {{ now().strftime('%A') }}.{{ ' ' ~ sky ~ (',' if now_temp != '' else '.') if sky else '' }}{{ ' ' ~ now_temp ~ '° outside.' if now_temp != '' else '' }}"
+      extra: "{{ [phone, drive] | select | join(' ') }}"
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Work tonight{{ ' (overtime)' if now().weekday() == 3 else '' }}. {{ update | replace('°', ' degrees') }}{% if now().weekday() == 2 and is_state('input_boolean.camper_trash_out', 'off') %} Put the trash out before you go!{% endif %}{{ ' ' ~ extra | replace('°', ' degrees') if extra else '' }}"
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    data:
+      title: "\U0001F4BC {{ now().strftime('%-I:%M') }} - Work tonight{{ ' (overtime)' if now().weekday() == 3 else
+        '' }}"
+      message: "{{ update }}{%
+        if now().weekday() == 2 and is_state('input_boolean.camper_trash_out', 'off')
+        %} \U0001F5D1️ Put the trash out before you go!{% endif %}{{ ' ' ~ extra if extra else '' }}"
+      data:
+        priority: high
+- id: schedule_ask_overtime
+  alias: 'Schedule: Ask About Thursday Overtime'
+  triggers:
+  - trigger: time
+    at: '10:00:00'
+  conditions:
+  - condition: time
+    weekday: thu
+  - condition: state
+    entity_id: input_boolean.camper_overtime_thursday
+    state: 'off'
+  actions:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Working overtime tonight?. It's Thursday - your optional overtime night."
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    data:
+      title: "\U0001F4BC Working overtime tonight?"
+      message: It's Thursday - your optional overtime night.
+      data:
+        priority: high
+        actions:
+        - action: SCHEDULE_OT_YES
+          title: Yes, working
+        - action: SCHEDULE_OT_NO
+          title: No, day off
+- id: schedule_overtime_answer
+  alias: 'Schedule: Overtime Answer (button)'
+  triggers:
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: SCHEDULE_OT_YES
+  actions:
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.camper_overtime_thursday
+- id: schedule_trash_when_home
+  alias: 'Schedule: Trash Reminder When Home Wednesday Morning'
+  triggers:
+  - trigger: state
+    entity_id: person.morris
+    to: home
+  conditions:
+  - condition: time
+    weekday: wed
+    after: 02:30:00
+    before: 08:00:00
+  - condition: state
+    entity_id: input_boolean.camper_trash_out
+    state: 'off'
+  actions:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Trash night - put it out now. Welcome home. Pickup is Thursday morning. Tap Done once it's out."
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    data:
+      title: "\U0001F5D1️ Trash night - put it out now"
+      message: Welcome home. Pickup is Thursday morning. Tap Done once it's out.
+      data:
+        priority: high
+        actions:
+        - action: SCHEDULE_TRASH_DONE
+          title: Done
+- id: schedule_trash_afternoon
+  alias: 'Schedule: Trash Reminder Wednesday Afternoon'
+  triggers:
+  - trigger: time
+    at: '13:30:00'
+  conditions:
+  - condition: time
+    weekday: wed
+  - condition: state
+    entity_id: input_boolean.camper_trash_out
+    state: 'off'
+  actions:
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Trash still needs to go out. Pickup is tomorrow (Thursday) morning. Morris leaves at 3:00 - put it out before then. Tap Done once it's out."
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data: &id001
+      title: "\U0001F5D1️ Trash still needs to go out"
+      message: Pickup is tomorrow (Thursday) morning. Morris leaves at 3:00 - put
+        it out before then. Tap Done once it's out.
+      data:
+        priority: high
+        actions:
+        - action: SCHEDULE_TRASH_DONE
+          title: Done
+  - action: notify.mobile_app_home
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        tts_text: "Trash still needs to go out. Pickup is tomorrow (Thursday) morning. Morris leaves at 3:00 - put it out before then. Tap Done once it's out."
+        media_stream: alarm_stream
+  - action: notify.mobile_app_home
+    continue_on_error: true
+    data: *id001
+- id: schedule_trash_done
+  alias: 'Schedule: Trash Done (button)'
+  triggers:
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: SCHEDULE_TRASH_DONE
+  actions:
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.camper_trash_out
+- id: schedule_weekly_reset
+  alias: 'Schedule: Weekly Reset'
+  triggers:
+  - trigger: time
+    at: '12:00:00'
+    id: thu_noon
+  - trigger: time
+    at: 06:00:00
+    id: fri_morning
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: thu_noon
+      - condition: time
+        weekday: thu
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.camper_trash_out
+    - conditions:
+      - condition: trigger
+        id: fri_morning
+      - condition: time
+        weekday: fri
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.camper_overtime_thursday
+- id: camper_storm_alert_pressure_drop
+  alias: Camper - Storm Alert (Pressure Drop)
+  description: Warns when barometric pressure falls 3+ hPa in 3 hours, a sign bad
+    weather is likely within 6-24 hours. Ignores drops over 10 hPa, or a 6h range
+    over 12 hPa, since those mean the camper changed altitude rather than weather.
+    At most one alert every 6 hours.
+  trigger:
+  - platform: numeric_state
+    entity_id: sensor.pressure_change_3h
+    below: -3
+    for:
+      minutes: 5
+  condition:
+  - condition: numeric_state
+    entity_id: sensor.pressure_change_3h
+    above: -10
+  - condition: numeric_state
+    entity_id: sensor.pressure_range_6h
+    below: 12
+  - condition: template
+    value_template: "{{ this.attributes.last_triggered is none\n   or now() - this.attributes.last_triggered
+      > timedelta(hours=6) }}"
+  action:
+  - variables:
+      msg: 'Pressure dropped {{ states(''sensor.pressure_change_3h'') | float | abs
+        }} hPa in 3 hours (now {{ states(''sensor.lumi_lumi_weather_pressure'') }}
+        hPa). Bad weather is likely within 6-24 hours: bring in the awning, secure
+        outside gear, and close vents.'
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "Storm Likely. {{ msg }}"
+        media_stream: alarm_stream
+  - service: notify.mobile_app_morris_sm_s906u
+    data:
+      title: ⛈️ Storm Likely
+      message: '{{ msg }}'
+      data:
+        priority: high
+        actions: "{{ [{'action': 'RETRACT_AWNING', 'title': 'Retract awning'}] if states('cover.awning') in ['open', 'opening'] else [] }}"
+  - service: persistent_notification.create
+    data:
+      title: ⛈️ Storm Likely
+      message: '{{ msg }}'
+  mode: single
+- id: goodnight_sleep_temps_end
+  alias: 'Goodnight: Sleep Temperatures End'
+  description: Puts the daytime heat/cool setpoints back 8 hours after Goodnight (Goodnight
+    saves them in the Daytime Cool/Heat Setpoint helpers).
+  mode: single
+  triggers:
+  - trigger: time
+    at: input_datetime.camper_sleep_until
+  actions:
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.camper_smart_heat_to
+    data:
+      value: '{{ states(''input_number.camper_day_heat_setpoint'') | int }}'
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.camper_smart_cool_to
+    data:
+      value: '{{ states(''input_number.camper_day_cool_setpoint'') | int }}'
+- id: camper_gesture_arm
+  alias: 'Gesture: ✌️ Victory -> Arm For 30 s'
+  description: First half of every gesture command. ✌️ starts a 30 s window; the
+    command gesture (☝️ fan on, ✊ fan off, 👍 Keurig on, 👎 Keurig off, 🤟 TV on/off,
+    🖕 Halloween video) must come inside it. Single gestures were misread dozens of times a day (2026-10-10).
+  triggers:
+  - trigger: event
+    event_type: camper_gesture
+    event_data:
+      gesture: Victory
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.event.data.score | float(0) >= 0.75 }}'
+  actions:
+  - action: timer.start
+    target:
+      entity_id: timer.camper_gesture_armed
+  mode: single
+- id: camper_gesture_fan_on_point
+  alias: 'Gesture: ✌️ then Pointing Up -> Ceiling Fan On'
+  description: Webcam gesture Pointing_Up (camper_vision on the Jetson) -> switch.turn_on
+    switch.ceiling_fan
+  triggers:
+  - trigger: event
+    event_type: camper_gesture
+    event_data:
+      gesture: Pointing_Up
+  conditions:
+  - condition: state
+    entity_id: input_select.camper_ceiling_fan_mode
+    state: Auto
+  - condition: template
+    # Camera must be at least 75% sure (lower scores kept firing by mistake - 2026-10-10)
+    value_template: '{{ trigger.event.data.score | float(0) >= 0.75 }}'
+  - condition: state
+    # Two-gesture combo: only works within 30 s of a ✌️ (see camper_gesture_arm)
+    entity_id: timer.camper_gesture_armed
+    state: active
+  actions:
+  - action: timer.cancel
+    target:
+      entity_id: timer.camper_gesture_armed
+  - action: switch.turn_on
+    target:
+      entity_id: switch.ceiling_fan
+  mode: single
+- id: camper_gesture_fan_off_fist
+  alias: 'Gesture: ✌️ then Closed Fist -> Ceiling Fan Off'
+  description: Webcam gesture Closed_Fist (camper_vision on the Jetson) -> switch.turn_off
+    switch.ceiling_fan
+  triggers:
+  - trigger: event
+    event_type: camper_gesture
+    event_data:
+      gesture: Closed_Fist
+  conditions:
+  - condition: state
+    entity_id: input_select.camper_ceiling_fan_mode
+    state: Auto
+  - condition: template
+    # Camera must be at least 75% sure (lower scores kept firing by mistake - 2026-10-10)
+    value_template: '{{ trigger.event.data.score | float(0) >= 0.75 }}'
+  - condition: state
+    # Two-gesture combo: only works within 30 s of a ✌️ (see camper_gesture_arm)
+    entity_id: timer.camper_gesture_armed
+    state: active
+  actions:
+  - action: timer.cancel
+    target:
+      entity_id: timer.camper_gesture_armed
+  - action: switch.turn_off
+    target:
+      entity_id: switch.ceiling_fan
+  mode: single
+- id: camper_gesture_keurig_on
+  alias: 'Gesture: ✌️ then Thumbs Up -> Keurig On'
+  description: Webcam gesture Thumb_Up (camper_vision on the Jetson) -> switch.turn_on
+    switch.smart_switch_1
+  triggers:
+  - trigger: event
+    event_type: camper_gesture
+    event_data:
+      gesture: Thumb_Up
+  conditions:
+  - condition: template
+    # Camera must be at least 75% sure (lower scores kept firing by mistake - 2026-10-10)
+    value_template: '{{ trigger.event.data.score | float(0) >= 0.75 }}'
+  - condition: state
+    # Two-gesture combo: only works within 30 s of a ✌️ (see camper_gesture_arm)
+    entity_id: timer.camper_gesture_armed
+    state: active
+  actions:
+  - action: timer.cancel
+    target:
+      entity_id: timer.camper_gesture_armed
+  - action: switch.turn_on
+    target:
+      entity_id: switch.smart_switch_1
+  mode: single
+- id: camper_gesture_keurig_off
+  alias: 'Gesture: ✌️ then Thumbs Down -> Keurig Off'
+  description: Webcam gesture Thumb_Down (camper_vision on the Jetson) -> switch.turn_off
+    switch.smart_switch_1
+  triggers:
+  - trigger: event
+    event_type: camper_gesture
+    event_data:
+      gesture: Thumb_Down
+  conditions:
+  - condition: template
+    # Camera must be at least 75% sure (lower scores kept firing by mistake - 2026-10-10)
+    value_template: '{{ trigger.event.data.score | float(0) >= 0.75 }}'
+  - condition: state
+    # Two-gesture combo: only works within 30 s of a ✌️ (see camper_gesture_arm)
+    entity_id: timer.camper_gesture_armed
+    state: active
+  actions:
+  - action: timer.cancel
+    target:
+      entity_id: timer.camper_gesture_armed
+  - action: switch.turn_off
+    target:
+      entity_id: switch.smart_switch_1
+  mode: single
+- id: camper_gesture_tv_toggle
+  alias: 'Gesture: ✌️ then 🤟 Rock Sign -> TV On/Off'
+  description: ✌️ then 🤟 (MediaPipe "ILoveYou" - rock sign with the thumb out; a
+    plain 🤘 isn't one of its gestures) turns the 50" Roku TV on if it's off, off if
+    it's on.
+  triggers:
+  - trigger: event
+    event_type: camper_gesture
+    event_data:
+      gesture: ILoveYou
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.event.data.score | float(0) >= 0.75 }}'
+  - condition: state
+    # Two-gesture combo: only works within 30 s of a ✌️ (see camper_gesture_arm)
+    entity_id: timer.camper_gesture_armed
+    state: active
+  actions:
+  - action: timer.cancel
+    target:
+      entity_id: timer.camper_gesture_armed
+  - action: "media_player.turn_{{ 'on' if states('media_player.bedroom_50_hisense_roku_tv')
+      in ['off', 'unavailable', 'unknown'] else 'off' }}"
+    target:
+      entity_id: media_player.bedroom_50_hisense_roku_tv
+  mode: single
+- id: camper_gesture_halloween_video
+  alias: 'Gesture: ✌️ then 🖕 -> Play Halloween Video On TV'
+  description: ✌️ then 🖕 (Middle_Finger - camper_vision works it out from the hand
+    landmarks, MediaPipe has no such gesture) plays The Skeleton Dance (1929 Disney
+    Silly Symphony, public domain since 2025) on the 50" Roku TV through its YouTube
+    app (Laughing Place upload 61t22VGByok). The TV has no Play-on-Roku channel and
+    sits on the T-Mobile LAN (192.168.12.x), so it can't stream a file from the Pi.
+    YouTube deep link only starts playback with media_type live.
+  triggers:
+  - trigger: event
+    event_type: camper_gesture
+    event_data:
+      gesture: Middle_Finger
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.event.data.score | float(0) >= 0.75 }}'
+  - condition: state
+    # Two-gesture combo: only works within 30 s of a ✌️ (see camper_gesture_arm)
+    entity_id: timer.camper_gesture_armed
+    state: active
+  actions:
+  - action: timer.cancel
+    target:
+      entity_id: timer.camper_gesture_armed
+  - if:
+    - condition: template
+      value_template: "{{ states('media_player.bedroom_50_hisense_roku_tv') in ['off',
+        'unavailable', 'unknown'] }}"
+    then:
+    - action: media_player.turn_on
+      target:
+        entity_id: media_player.bedroom_50_hisense_roku_tv
+    - delay: 00:00:10
+  - action: media_player.play_media
+    target:
+      entity_id: media_player.bedroom_50_hisense_roku_tv
+    data:
+      media_content_type: app
+      media_content_id: '837'
+      extra:
+        content_id: 61t22VGByok
+        media_type: live
+  mode: single
+- id: keurig_wake_up_motion
+  alias: 'Keurig: Start on Wake-Up Motion'
+  description: 'First motion between 11:00 AM and 2:30 PM on a work day turns the
+    Keurig on (Morris gets up before his 2 PM alarm: bathroom, then coffee). Weekdays
+    only after Nadine has left for child care; Sundays any motion. Once a day.'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.lumi_lumi_sensor_motion_aq2
+    to: 'on'
+  conditions:
+  - condition: time
+    after: '11:00:00'
+    before: '14:30:00'
+  - condition: or
+    conditions:
+    - condition: time
+      weekday:
+      - sun
+      - mon
+      - tue
+      - wed
+    - condition: and
+      conditions:
+      - condition: time
+        weekday:
+        - thu
+      - condition: state
+        entity_id: input_boolean.camper_overtime_thursday
+        state: 'on'
+  - condition: or
+    conditions:
+    - condition: not
+      conditions:
+      - condition: state
+        entity_id: person.nadine
+        state: home
+    - condition: time
+      weekday:
+      - sat
+      - sun
+  - condition: state
+    entity_id: switch.smart_switch_1
+    state: 'off'
+  - condition: template
+    value_template: '{% set t = state_attr(this.entity_id, ''last_triggered'') %}{{
+      t is none or as_local(t).date() < now().date() }}'
+  actions:
+  - action: switch.turn_on
+    target:
+      entity_id: switch.smart_switch_1
+  mode: single
+- id: thermostat_mode_select_picked
+  alias: 'Thermostat: Mode Dropdown Picked'
+  description: Dashboard Mode dropdown -> same as the old Off/Cool/Heat/Auto/Dry/Fan
+    only buttons (Auto = Smart Auto). Only reacts to a person picking, not to the
+    sync automation.
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: input_select.camper_thermostat_mode
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.to_state.context.user_id is not none and trigger.from_state
+      is not none and trigger.from_state.state != trigger.to_state.state }}'
+  actions:
+  - action: script.camper_thermostat_set_mode
+    data:
+      mode: "{{ {'Off': 'off', 'Cool': 'cool', 'Heat': 'heat', 'Auto': 'auto', 'Dry':
+        'dry', 'Fan only': 'fan_only'}[trigger.to_state.state] }}"
+- id: thermostat_mode_select_sync
+  alias: 'Thermostat: Mode Dropdown Sync'
+  description: Keeps the Mode dropdown showing what the thermostat is doing (wall
+    panel, app, voice, Smart Auto). Waits 20 s after a pick so the dropdown does
+    not flick back while the Bluetooth command lands.
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+  - trigger: state
+    entity_id: input_boolean.camper_smart_auto
+  - trigger: homeassistant
+    event: start
+  - trigger: time_pattern
+    minutes: /1
+  variables:
+    m: "{{ states('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate') }}"
+    label: "{% if m in ['cool', 'heat'] and is_state('input_boolean.camper_smart_auto',
+      'on') %}Auto{% else %}{{ {'off': 'Off', 'cool': 'Cool', 'heat': 'Heat', 'auto':
+      'Auto', 'dry': 'Dry', 'fan_only': 'Fan only'}.get(m, '') }}{% endif %}"
+  conditions:
+  - condition: template
+    value_template: "{{ label != '' and label != states('input_select.camper_thermostat_mode')
+      and (now() - states.input_select.camper_thermostat_mode.last_changed).total_seconds()
+      > 20 }}"
+  actions:
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.camper_thermostat_mode
+    data:
+      option: '{{ label }}'
+- id: thermostat_fan_select_picked
+  alias: 'Thermostat: Fan Dropdown Picked'
+  description: Dashboard Fan dropdown -> climate.set_fan_mode. Cycled = runs with
+    heat/cool, Manual = always on. Only reacts to a person picking.
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: input_select.camper_thermostat_fan
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.to_state.context.user_id is not none and trigger.from_state
+      is not none and trigger.from_state.state != trigger.to_state.state }}'
+  actions:
+  - action: climate.set_fan_mode
+    target:
+      entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+    data:
+      fan_mode: "{{ {'Cycled Low': 'low', 'Cycled High': 'high', 'Manual Low': 'manual_low',
+        'Manual High': 'manual_high', 'Auto': 'auto', 'Low': 'low', 'High': 'high',
+        'Off': 'off'}[trigger.to_state.state] }}"
+- id: thermostat_fan_select_sync
+  alias: 'Thermostat: Fan Dropdown Sync'
+  description: Keeps the Fan dropdown's choices and value matching the thermostat.
+    Fan only offers Low/High/Off (always manual); other modes offer Cycled/Manual
+    Low/High and Auto. Waits 20 s after a pick.
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+  - trigger: state
+    entity_id: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+    attribute: fan_mode
+  - trigger: homeassistant
+    event: start
+  - trigger: time_pattern
+    minutes: /1
+  variables:
+    m: "{{ states('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate') }}"
+    f: "{{ state_attr('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate', 'fan_mode')
+      }}"
+    opts: "{% if m == 'fan_only' %}{{ ['Low', 'High', 'Off'] }}{% else %}{{ ['Cycled
+      Low', 'Cycled High', 'Manual Low', 'Manual High', 'Auto'] + (['Off'] if f ==
+      'off' else []) }}{% endif %}"
+    label: "{% if m == 'fan_only' %}{{ {'low': 'Low', 'high': 'High', 'off': 'Off'}.get(f,
+      '') }}{% else %}{{ {'low': 'Cycled Low', 'high': 'Cycled High', 'manual_low':
+      'Manual Low', 'manual_high': 'Manual High', 'auto': 'Auto', 'off': 'Off'}.get(f,
+      '') }}{% endif %}"
+  conditions:
+  - condition: template
+    value_template: "{{ label != '' and (now() - states.input_select.camper_thermostat_fan.last_changed).total_seconds()
+      > 20 and (state_attr('input_select.camper_thermostat_fan', 'options') != opts
+      or states('input_select.camper_thermostat_fan') != label) }}"
+  actions:
+  - if:
+    - condition: template
+      value_template: "{{ state_attr('input_select.camper_thermostat_fan', 'options')
+        != opts }}"
+    then:
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.camper_thermostat_fan
+      data:
+        options: '{{ opts }}'
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.camper_thermostat_fan
+    data:
+      option: '{{ label }}'
+- id: thermostat_schedule
+  alias: 'Thermostat: Work-Night Schedule'
+  description: >-
+    Schedule tab. On work nights (Sun-Wed, plus Thu when Overtime Thu is on)
+    each of the four times sets its own Heat to / A/C to pair (Night, Warm Up,
+    Morning Sleep, Day at Morning Sleep Ends). Uses exactly the numbers
+    typed on the Schedule tab; A/C is only held at or above heat (2026-10-15). The night-start run records whether
+    tonight is a work night (camper_tsched_work_night); the morning runs check
+    that, because Overtime Thu resets itself at 6 AM Friday. Warm-ups end any
+    Goodnight sleep temps; cool-downs are skipped while Goodnight is running.
+  mode: queued
+  triggers:
+  - trigger: time
+    at: input_datetime.camper_tsched_night_start
+    id: night
+  - trigger: time
+    at: input_datetime.camper_tsched_home
+    id: home
+  - trigger: time
+    at: input_datetime.camper_tsched_sleep_start
+    id: sleep
+  - trigger: time
+    at: input_datetime.camper_tsched_sleep_end
+    id: wake
+  conditions:
+  - condition: state
+    entity_id: input_boolean.camper_tsched_enabled
+    state: 'on'
+  actions:
+  - variables:
+      w: '{{ now().weekday() }}'
+      tonight_work: "{{ w in [6, 0, 1, 2] or (w == 3 and is_state('input_boolean.camper_overtime_thursday',
+        'on')) }}"
+      period: "{{ {'night': 'night', 'home': 'home', 'sleep': 'sleep', 'wake': 'day'}[trigger.id] }}"
+      heat: "{{ states('input_number.camper_tsched_' ~ period ~ '_heat') | int(65) }}"
+      cool: "{{ [states('input_number.camper_tsched_' ~ period ~ '_cool') | int(72), heat] | max }}"
+  - if:
+    - condition: trigger
+      id: night
+    then:
+    - action: "input_boolean.turn_{{ 'on' if tonight_work else 'off' }}"
+      target:
+        entity_id: input_boolean.camper_tsched_work_night
+  - condition: state
+    entity_id: input_boolean.camper_tsched_work_night
+    state: 'on'
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: [night, sleep]
+      sequence:
+      # Let a Goodnight that ends at this same minute put its values back first
+      - delay: 00:00:05
+      - condition: template
+        value_template: "{{ as_timestamp(states('input_datetime.camper_sleep_until'),
+          0) <= as_timestamp(now()) }}"
+      - action: script.camper_thermostat_set_pair
+        data:
+          heat: '{{ heat }}'
+          cool: '{{ cool }}'
+    - conditions:
+      - condition: trigger
+        id: [home, wake]
+      sequence:
+      # Day temps become Goodnight's saved values too, so it can't bring night temps back
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.camper_day_heat_setpoint
+        data:
+          value: '{{ heat }}'
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.camper_day_cool_setpoint
+        data:
+          value: '{{ cool }}'
+      - if:
+        - condition: template
+          value_template: "{{ as_timestamp(states('input_datetime.camper_sleep_until'),
+            0) > as_timestamp(now()) }}"
+        then:
+        - action: input_datetime.set_datetime
+          target:
+            entity_id: input_datetime.camper_sleep_until
+          data:
+            datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+      - action: script.camper_thermostat_set_pair
+        data:
+          heat: '{{ heat }}'
+          cool: '{{ cool }}'
+- id: nadine_morning_meds_reminder
+  alias: 'Nadine: Morning Meds Reminder'
+  description: Every day at 5:00 AM, remind Nadine to take her meds. Also speaks it on
+    her phone's alarm sound (2026-10-17) so it rings through Do Not Disturb, at her
+    alarm-clock volume.
+  triggers:
+  - trigger: time
+    at: 05:00:00
+  actions:
+  - action: notify.mobile_app_home
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        tts_text: Good morning Nadine. Time to take your morning meds.
+        media_stream: alarm_stream
+  - action: notify.mobile_app_home
+    data:
+      title: "\U0001F48A Time for your meds"
+      message: Good morning Nadine! Don't forget to take your morning meds.
+      data:
+        tag: nadine_morning_meds
+        priority: high
+        ttl: 0
+        sticky: 'true'
+        actions:
+        - action: NADINE_MEDS_TAKEN
+          title: ✓ Took them
+- id: nadine_morning_meds_taken
+  alias: 'Nadine: Morning Meds Taken (button)'
+  triggers:
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: NADINE_MEDS_TAKEN
+  actions:
+  - action: notify.mobile_app_home
+    data:
+      message: clear_notification
+      data:
+        tag: nadine_morning_meds
+- id: read_aloud_refresh_files
+  alias: "Read Aloud: refresh file list"
+  description: "Keeps the Read Aloud dropdown in sync with the .txt files in www/read_aloud."
+  mode: queued
+  triggers:
+    - trigger: homeassistant
+      event: start
+    - trigger: state
+      entity_id: sensor.read_aloud
+      attribute: file_list
+  actions:
+    - variables:
+        files: "{{ (state_attr('sensor.read_aloud', 'file_list') or []) | map('regex_replace', '^.*/', '') | sort | list }}"
+        opts: "{{ files if files else ['(no files yet)'] }}"
+        cur: "{{ states('input_select.read_aloud_file') }}"
+    - condition: template
+      value_template: "{{ opts != state_attr('input_select.read_aloud_file', 'options') }}"
+    - action: input_select.set_options
+      target: { entity_id: input_select.read_aloud_file }
+      data: { options: "{{ opts }}" }
+    - if:
+        - condition: template
+          value_template: "{{ cur in opts }}"
+      then:
+        - action: input_select.select_option
+          target: { entity_id: input_select.read_aloud_file }
+          data: { option: "{{ cur }}" }
+- id: camper_dehumidifier_tank_full
+  alias: 'Camper: Dehumidifier Tank Full'
+  description: The Midea dehumidifier stops when its bucket is full (or the drain hose is blocked).
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.dehumidifier_tank_full
+    to: 'on'
+    for: '00:02:00'
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001FAA3 Dehumidifier tank full"
+      message: The dehumidifier stopped because its tank is full. Empty the bucket, or check that the drain hose isn't kinked or blocked.
+  mode: single
+- id: camper_water_leak
+  alias: 'Camper: Water Leak Shutoff'
+  description: Wireless Aqara leak probes (2026-10-17). Any wet probe has the wall panel
+    shut the pump off and close the water main (and the water heater burner for a
+    water heater leak), then alerts both phones. Water stays off until script.camper_leak_reset.
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.camper_water_leak
+    to: 'on'
+  - trigger: state
+    entity_id: binary_sensor.camper_water_leak
+    attribute: wet
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.camper_water_leak
+    state: 'on'
+  actions:
+  - variables:
+      where: "{{ state_attr('binary_sensor.camper_water_leak', 'wet') | join(', ') }}"
+      heater: "{{ state_attr('binary_sensor.camper_water_leak', 'heater') | bool(false) }}"
+      panel_online: "{{ has_value('binary_sensor.camper_wall_panel_camper_wall_panel_leak_lockout') }}"
+      shut_off: "{{ panel_online and is_state('input_boolean.camper_wall_panel_connected', 'on') }}"
+  - if:
+    - condition: template
+      value_template: '{{ panel_online }}'
+    then:
+    - action: esphome.camper_wall_panel_leak_shutoff
+      continue_on_error: true
+      data:
+        where: '{{ where }}'
+        heater_off: '{{ heater }}'
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F4A7 Water leak - {{ where }}"
+      message: "{% if shut_off %}The pump is off and the water main is closed{% if heater %},
+        and the water heater burner is off{% endif %}. Dry the probe, then press Leak Reset
+        on the Water page.{% else %}The wall panel can't shut the water off (not wired in
+        or offline) - turn the water off by hand.{% endif %}"
+      urgent: true
+  mode: queued
+- id: shopping_store_arrival
+  alias: 'Shopping: List When Arriving at a Store'
+  description: When Morris or Nadine has been at any local Walmart or Ingles, or any Dollar General
+    in Gaffney, Shelby or Pacolet, for 2 minutes (so driving past doesn't count), send
+    that person the shopping list. Items with "Amazon" in the name are listed separately
+    as things to order online. Nothing is sent if the list is empty. (2026-10-17)
+  mode: queued
+  triggers:
+  - trigger: state
+    entity_id:
+    - person.morris
+    - person.nadine
+    to: ~
+    for: 00:02:00
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.state.startswith(('Walmart', 'Dollar General', 'Ingles')) }}"
+  actions:
+  - action: todo.get_items
+    target:
+      entity_id: todo.shopping_list
+    data:
+      status: needs_action
+    response_variable: r
+  - variables:
+      names: "{{ r['todo.shopping_list']['items'] | map(attribute='summary') | list }}"
+      store: "{{ names | reject('search', '(?i)amazon') | list }}"
+      online: "{{ names | select('search', '(?i)amazon') | map('regex_replace', '(?i)\\s*\\(?amazon\\)?', '') | list }}"
+      phone: "{{ 'notify.mobile_app_morris_sm_s906u' if trigger.entity_id == 'person.morris' else 'notify.mobile_app_home' }}"
+  - condition: template
+    value_template: '{{ store | count > 0 }}'
+  - if:
+    - condition: template
+      value_template: "{{ phone == 'notify.mobile_app_morris_sm_s906u' }}"
+    then:
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        message: TTS
+        data:
+          priority: high
+          tts_text: "{{ ('At ' ~ (trigger.to_state.state.split(' ')[0] if trigger.to_state.state.startswith(('Walmart', 'Ingles')) else 'Dollar General') ~ '. ' ~ store | count ~ ' on the list. ' ~ store | join(', ')) | replace('°', ' degrees') | regex_replace('[^ -~]', '') }}"
+          media_stream: alarm_stream
+  - if:
+    - condition: template
+      value_template: "{{ phone == 'notify.mobile_app_home' }}"
+    then:
+    - action: notify.mobile_app_home
+      continue_on_error: true
+      data:
+        message: TTS
+        data:
+          tts_text: "{{ ('At ' ~ (trigger.to_state.state.split(' ')[0] if trigger.to_state.state.startswith(('Walmart', 'Ingles')) else 'Dollar General') ~ '. ' ~ store | count ~ ' on the list. ' ~ store | join(', ')) | replace('°', ' degrees') | regex_replace('[^ -~]', '') }}"
+          media_stream: alarm_stream
+  - action: '{{ phone }}'
+    data:
+      title: "\U0001F6D2 At {{ trigger.to_state.state.split(' ')[0] if trigger.to_state.state.startswith(('Walmart', 'Ingles')) else 'Dollar General' }} - {{ store | count }} on the list"
+      message: "{{ store | join(', ') }}{% if online %} (Order on Amazon: {{ online | join(', ') }}){% endif %}"
+      data:
+        priority: "{{ 'high' if phone == 'notify.mobile_app_morris_sm_s906u' else 'normal' }}"
+        tag: shopping_store_arrival
+        clickAction: /lovelace-camper/shopping
+        actions:
+        - action: URI
+          title: Open list
+          uri: /lovelace-camper/shopping
+- id: shopping_cereal_picked
+  alias: 'Shopping: Cereal Picked'
+  description: Picking a cereal in the Cereal dropdown (Shopping page) adds "Cereal - <name>"
+    to the shopping list if it isn't there yet, then resets the dropdown. (2026-10-17)
+  mode: queued
+  triggers:
+  - trigger: state
+    entity_id: input_select.shopping_cereal
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.state not in ['Pick a cereal...', 'unknown', 'unavailable'] }}"
+  actions:
+  - variables:
+      item: "Cereal - {{ trigger.to_state.state }}"
+  - if:
+    - condition: template
+      value_template: "{{ item | lower not in (state_attr('sensor.shopping_list_items', 'items') or []) | map('lower') | list }}"
+    then:
+    - action: script.camper_shopping_toggle
+      data:
+        item: "{{ item }}"
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.shopping_cereal
+    data:
+      option: "Pick a cereal..."
+- id: sequoia_trans_hot
+  alias: 'Sequoia: Transmission Too Hot'
+  description: 2016 Sequoia transmission temp (Torque Pro via the ELM327) over 230°F for 30 s -
+    mostly when towing the camper. Morris's phone says it out loud on the alarm sound (he's
+    driving, so no need to look) and both phones get a notification. 245°F = pull over now.
+    Fires again only after it has cooled below the line and climbed back over. (2026-10-17)
+  mode: queued
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.sequoia_gauge_transmission_temp
+    above: 230
+    for: 00:00:30
+    id: hot
+  - trigger: numeric_state
+    entity_id: sensor.sequoia_gauge_transmission_temp
+    above: 245
+    for: 00:00:15
+    id: very_hot
+  actions:
+  - variables:
+      temp: "{{ states('sensor.sequoia_gauge_transmission_temp') | int(0) }}"
+      very: "{{ trigger.id == 'very_hot' }}"
+      say: "{% if very %}Warning. Transmission is {{ temp }} degrees. Pull over safely and let it idle to cool down.{% else %}Transmission is getting hot, {{ temp }} degrees. Slow down or shift to a lower gear.{% endif %}"
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: "{{ say }}"
+        media_stream: alarm_stream
+  - action: script.camper_notify_both
+    data:
+      title: "{{ '\U0001F6D1 Transmission ' ~ temp ~ '°F - pull over' if very else '\U0001F525 Transmission hot: ' ~ temp ~ '°F' }}"
+      message: "{% if very %}Pull over safely and let the Sequoia idle in Park so the cooler can bring it down.{% else %}Slow down a little, shift to a lower gear (or turn off overdrive / use Tow-Haul) and watch it come back under 220°F.{% endif %}"
+      urgent: true
+- id: stereo_forget_station
+  alias: 'Stereo: Forget Station Name When Something Else Plays'
+  description: The Stereo page shows the preset's name (input_text.stereo_station). When
+    anything other than that station is played on the stereo (YouTube, radio search, Test
+    voice, Read aloud) clear it so the page doesn't show the wrong name. (2026-10-20)
+  mode: queued
+  triggers:
+  - trigger: event
+    event_type: call_service
+    event_data:
+      domain: media_player
+      service: play_media
+  - trigger: event
+    event_type: call_service
+    event_data:
+      domain: tts
+      service: speak
+  conditions:
+  - condition: template
+    value_template: "{{ 'media_player.camper_stereo' in (trigger.event.data.service_data | string) }}"
+  - condition: template
+    value_template: "{{ (trigger.event.data.service_data.media_content_id | default('')) != states('input_text.stereo_station_url') }}"
+  actions:
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.stereo_station
+    data:
+      value: ''
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.stereo_station_url
+    data:
+      value: ''
+
+# ==== Under-camper heater (freeze protection, added 2026-10-21) ====
+# Heater on the old dehumidifier Kasa plug (switch.under_camper_heater), driven by the
+# Aqara sensor under the skirting. On below 38°F, off at 45°F; in between, leave it alone.
+- id: under_camper_heater_control
+  alias: 'Under Camper: Heater On Below 38, Off At 45'
+  mode: queued
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.under_camper_temperature
+    below: 38
+  - trigger: numeric_state
+    entity_id: sensor.under_camper_temperature
+    above: 44.9
+  - trigger: homeassistant
+    event: start
+  - trigger: time_pattern
+    minutes: /15
+  conditions:
+  - condition: template
+    value_template: "{{ states('sensor.under_camper_temperature') | is_number }}"
+  actions:
+  - choose:
+    - conditions:
+      - condition: numeric_state
+        entity_id: sensor.under_camper_temperature
+        below: 38
+      - condition: state
+        entity_id: switch.under_camper_heater
+        state: 'off'
+      sequence:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.under_camper_heater
+    - conditions:
+      - condition: numeric_state
+        entity_id: sensor.under_camper_temperature
+        above: 44.9
+      - condition: state
+        entity_id: switch.under_camper_heater
+        state: 'on'
+      sequence:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.under_camper_heater
+- id: under_camper_freeze_alert
+  alias: 'Under Camper: Freeze Alert'
+  mode: single
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.under_camper_temperature
+    below: 34
+    for: 00:15:00
+  actions:
+  - action: script.camper_notify_both
+    data:
+      urgent: true
+      title: "🥶 {{ states('sensor.under_camper_temperature') | round(0) }}°F under the camper"
+      message: >-
+        Pipes could freeze.
+        {% if is_state('switch.under_camper_heater', 'on') %}The heater is ON but can't keep up - check that it's running and the skirting is closed.
+        {% elif is_state('switch.under_camper_heater', 'off') %}The heater is OFF - turn it on from the Climate page.
+        {% else %}The heater plug isn't responding - check that it's plugged in.{% endif %}
+- id: under_camper_sensor_offline
+  alias: 'Under Camper: Sensor Offline'
+  mode: single
+  triggers:
+  # ZHA marks it unavailable after 3 h with no check-in (consider_unavailable_battery
+  # = 10800, counted from the stick's saved last_seen, so restarts don't reset it).
+  # The 10 min here only skips rejoin blips; a template (not state+for) re-checks
+  # every minute, so a restart can't cancel the wait for good.
+  - trigger: template
+    value_template: >-
+      {{ is_state('sensor.under_camper_temperature', 'unavailable')
+         and now() - states.sensor.under_camper_temperature.last_changed
+             > timedelta(minutes=10) }}
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "⚠️ Under-camper sensor offline"
+      message: >-
+        No reading from the sensor under the camper for 3 hours, so the heater
+        can't switch on by itself. Check its battery (it was
+        {{ states('sensor.under_camper_battery') }}%).
+- id: safety_drive_home_check
+  alias: 'Safety: Safe Drive Home Check'
+  description: After Morris leaves work at night, if his phone isn't home 75 min
+    later (the drive is 30-55 min, store stops included), ask him "Are you OK?".
+    No answer in 20 min - tell Nadine, with his last location. Added 2026-10-23.
+  mode: single
+  triggers:
+  - trigger: zone
+    entity_id: device_tracker.sm_s906u
+    zone: zone.work
+    event: leave
+  conditions:
+  - condition: time
+    after: 00:00:00
+    before: 09:00:00
+  actions:
+  - variables:
+      left: "{{ now().strftime('%-I:%M') }}"
+  - wait_for_trigger:
+    - trigger: state
+      entity_id: device_tracker.sm_s906u
+      to: home
+    timeout: 01:15:00
+    continue_on_timeout: true
+  - condition: template
+    value_template: "{{ wait.trigger is none and not is_state('device_tracker.sm_s906u', 'home') }}"
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: Are you OK? You left work at {{ left }} and you're not home yet. Tap the alert, then tap I'm OK, or I'll tell Nadine in 20 minutes.
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      title: "\U0001F697 Are you OK?"
+      message: You left work at {{ left }} and you're not home yet. Tap here, then tap I'm OK, or I'll tell Nadine in 20 minutes.
+      data:
+        priority: high
+        tag: safe_drive
+        clickAction: /lovelace-camper/safe-drive
+        actions:
+        - action: SAFE_DRIVE_OK
+          title: I'm OK
+  - wait_for_trigger:
+    - trigger: event
+      event_type: mobile_app_notification_action
+      event_data:
+        action: SAFE_DRIVE_OK
+    - trigger: event
+      event_type: safe_drive_ok
+    - trigger: state
+      entity_id: device_tracker.sm_s906u
+      to: home
+    timeout: 00:20:00
+    continue_on_timeout: true
+  - if:
+    - condition: template
+      value_template: "{{ wait.trigger is not none }}"
+    then:
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        title: "\u2705 Got it"
+        message: Nadine won't be told.
+        data:
+          tag: safe_drive
+    - stop: Morris answered or got home
+  - variables:
+      lat: "{{ state_attr('device_tracker.sm_s906u', 'latitude') }}"
+      lon: "{{ state_attr('device_tracker.sm_s906u', 'longitude') }}"
+      seen: "{{ as_local(states.device_tracker.sm_s906u.last_updated).strftime('%-I:%M') }}"
+  - action: notify.mobile_app_home
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: Morris left work at {{ left }} and is not home yet. He did not answer Are you OK. Please call him.
+        media_stream: alarm_stream
+  - action: notify.mobile_app_home
+    continue_on_error: true
+    data:
+      title: "\U0001F697 Morris isn't home yet"
+      message: He left work at {{ left }} and didn't answer "Are you OK?". Please call him. His phone was last seen at {{ seen }}{{ ' - tap Map' if lat else '' }}.
+      data:
+        priority: high
+        actions: "{{ [{'action': 'URI', 'title': 'Map', 'uri': 'https://maps.google.com/?q=' ~ lat ~ ',' ~ lon}] if lat else [] }}"
+- id: voice_find_my_phone
+  alias: 'Voice: Find My Phone'
+  description: '"Hey Jarvis, find my phone" - Morris''s phone says "Here I am" at
+    full alarm volume (works on silent; the volume goes back after). Added 2026-10-23.'
+  mode: single
+  triggers:
+  - trigger: conversation
+    command:
+    - '[please] (find|ring|call) my (phone|cell phone|cellphone)'
+    - where is my (phone|cell phone|cellphone)
+    - where's my (phone|cell phone|cellphone)
+    - i can't find my (phone|cell phone|cellphone)
+    - i cannot find my (phone|cell phone|cellphone)
+    - help me find my (phone|cell phone|cellphone)
+    - i lost my (phone|cell phone|cellphone)
+  actions:
+  - set_conversation_response: Ringing your phone now.
+  - repeat:
+      count: 4
+      sequence:
+      - action: notify.mobile_app_morris_sm_s906u
+        continue_on_error: true
+        data:
+          message: TTS
+          data:
+            priority: high
+            tts_text: Here I am. Here I am. Morris, your phone is right here.
+            media_stream: alarm_stream_max
+      - delay: 00:00:07
+- id: camper_smoke_alarm_heard
+  alias: 'Camper: Smoke Alarm Heard'
+  description: The Jetson's webcam mic (sound_watch.py) heard a smoke or CO alarm
+    beeping. Only alerts when nobody is home (Daisy is inside). Added 2026-10-23.
+  mode: single
+  triggers:
+  - trigger: webhook
+    webhook_id: !secret sound_smoke_webhook_id
+    allowed_methods:
+    - POST
+    local_only: true
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.daisy_home_alone
+    state: 'on'
+  actions:
+  - action: script.camper_notify_both
+    data:
+      title: "\U0001F525 Smoke alarm going off in the camper"
+      message: The camper's microphone hears a smoke or CO alarm beeping. Daisy is inside. Go home or call someone nearby now.
+      urgent: true
+  - delay: 00:10:00
+- id: camper_daisy_barking
+  alias: 'Daisy: Barking a Lot'
+  description: The Jetson's webcam mic (sound_watch.py) heard barking for a while.
+    Only while Daisy is home alone; at most once every 30 min. Added 2026-10-23.
+  mode: single
+  triggers:
+  - trigger: webhook
+    webhook_id: !secret sound_bark_webhook_id
+    allowed_methods:
+    - POST
+    local_only: true
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.daisy_home_alone
+    state: 'on'
+  actions:
+  - variables:
+      secs: "{{ trigger.json.seconds | default(0) | int(0) if trigger.json is defined else 0 }}"
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      message: TTS
+      data:
+        priority: high
+        tts_text: Daisy is barking a lot. Something may be going on at the camper.
+        media_stream: alarm_stream
+  - action: notify.mobile_app_morris_sm_s906u
+    continue_on_error: true
+    data:
+      title: "\U0001F415 Daisy is barking a lot"
+      message: The camper's microphone heard her bark{{ ' for about ' ~ secs ~ ' seconds' if secs else '' }} in the last few minutes. Something may be going on outside.
+      data:
+        priority: high
+  - delay: 00:30:00
+# Freeze-protection safety net for the heater test (2026-10-26): never leave the 38/45
+# heater automation switched off for long, and always turn it back on after a restart.
+- id: under_camper_heater_test_safety
+  alias: 'Under Camper: Heater Test Safety Net'
+  mode: single
+  triggers:
+  - trigger: state
+    entity_id: automation.under_camper_heater_on_below_38_off_at_45
+    to: 'off'
+    for: 00:25:00
+  - trigger: homeassistant
+    event: start
+  conditions:
+  - condition: state
+    entity_id: automation.under_camper_heater_on_below_38_off_at_45
+    state: 'off'
+  actions:
+  - action: automation.turn_on
+    target:
+      entity_id: automation.under_camper_heater_on_below_38_off_at_45
+  - action: automation.trigger
+    target:
+      entity_id: automation.under_camper_heater_on_below_38_off_at_45
+    data:
+      skip_condition: false

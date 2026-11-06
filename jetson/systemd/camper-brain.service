@@ -1,0 +1,35 @@
+[Unit]
+Description=Camper brain: always-on tool-calling LLM for Home Assistant (llama-server, 0.0.0.0:8090)
+# Model chosen by ~/needle3/bench_tools.py (2026-10-04): Qwen3.5-4B scored 14/15 on camper tool calls.
+# Image generation (jetson-ui) and the chat page (jetson-llm) pause this unit while they run and
+# start it again when they stop -- see their pause-brain.conf drop-ins. Do not run them together:
+# the Jetson's 7.6 GB unified memory cannot hold two of these at once.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=morris
+Environment=PATH=/usr/local/cuda-12.6/bin:/usr/bin:/bin
+Environment=LD_LIBRARY_PATH=/home/morris/llama.cpp/build-cuda/bin:/usr/local/cuda-12.6/lib64
+Environment=GGML_CUDA_NO_VMM=1
+# NvMap will not reclaim page cache for a cudaMalloc, and a model switch leaves memory fragmented.
+ExecStartPre=+/bin/sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory'
+# --reasoning off: Qwen3.5 is a thinking model; Home Assistant does not ask it to skip thinking.
+# --parallel 2 / -c 16384: two 8k slots - one for Home Assistant, one for the chat web UI (2026-10-05).
+# --ctx-checkpoints/--cache-ram: Qwen3.5 is hybrid-recurrent and saves 50 MB state checkpoints;
+# defaults (32 + 8 GB prompt cache) let RSS grow to 4.5 GB. 4 keeps the HA prompt-prefix reuse.
+# -b/-ub 512 + -fit off: the default 2048 batch needs a 495 MiB compute buffer that failed to
+# allocate on startup (2 crash-restarts), and -fit makes extra trial allocations.
+ExecStart=/home/morris/llama.cpp/build-cuda/bin/llama-server \
+  -m /home/morris/models/Qwen3.5-4B-Uncensored-HauhauCS-q4_k_m.gguf --alias camper-brain \
+  --host 0.0.0.0 --port 8090 -ngl 99 -c 16384 --parallel 2 --no-mmap --direct-io \
+  --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 --jinja --reasoning off \
+  --ctx-checkpoints 12 --checkpoint-every-n-tokens 1024 --cache-ram 256 -b 512 -ub 512 -fit off \
+  --ui-config-file /home/morris/camper-brain-ui.json --chat-template-file /home/morris/camper-brain-template.jinja --ui-mcp-proxy --path /home/morris/camper-brain-webui \
+  --temp 0.6 --top-k 20 --top-p 0.95 --min-p 0 \
+  --reasoning-budget 400 --reasoning-budget-message "Okay, I have thought about this enough. Time to give the answer."
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

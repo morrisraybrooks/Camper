@@ -1,0 +1,628 @@
+# Awning controller for a Lippert Solera-style 12 V power awning. One box
+# on the outer arm next to the roller tube (where the motor is): ESP32,
+# BTS7960 motor driver, ACS712 current sensor, MPU-6050 and a 12->5 V buck.
+# The factory motor pair down the arm becomes the 12 V feed; a thin 4-core
+# cable alongside it carries the wall rocker (manual override) and the
+# "closed" reed switch from the bottom of the rail. See the build guide.
+substitutions:
+  awn_ota_pw: !secret camper_awning_ota_password
+  device_name: camper-awning-weather
+  friendly_name: "Camper Awning"
+
+  # ---- MOTOR DRIVER ----
+  # BTS7960 (IBT-2) 43 A H-bridge board. GPIO25 -> RPWM (extend),
+  # GPIO26 -> LPWM (retract), R_EN + L_EN tied to 3.3 V, board VCC on
+  # 3.3 V. Inputs are active-high; 10k pull-downs keep it off at boot.
+  # The wall rocker drives the same inputs through 33k resistors, so it
+  # works even with the ESP32 dead.
+
+  # ---- MOTOR CURRENT (ACS712 or similar) ----
+  # The zero point is learned automatically whenever the motor is off, so
+  # there's nothing to measure for it. amps_per_volt depends on the module
+  # and on the resistor divider in front of the ESP32 pin:
+  #   ACS712-20A = 100 mV/A on a 5 V supply; its output swings up to 5 V,
+  #   which is too much for the ESP32, so put a 10k/10k divider in front of
+  #   GPIO39. That halves it to 50 mV/A -> 20 A per volt.
+  motor_amps_per_volt: "20.0"
+  # Motor current above this = stalled (an obstruction, a jam, or closed
+  # tight). The motor does NOT stall at full open: it keeps turning and
+  # rolls the fabric back up upside down, so full open is stopped by the
+  # tilt (see POSITION). Check the "Motor Current" reading during a normal
+  # run and set this a few amps above it.
+  motor_stall_amps: "5.0"
+  # Ignore the start-up surge for this long after the motor turns on.
+  inrush_ignore_ms: "750"
+  # Current above this with the firmware's motor off = someone is running it
+  # from the wall rocker. The wind check waits while that happens.
+  manual_run_amps: "1.0"
+
+  # ---- TRAVEL CHECKS ----
+  # Backstop: never run longer than this in one go. Time a full open and
+  # a full close with a stopwatch and set this about 3 s above the slower
+  # one. Keep it tight: past full open the motor keeps rolling the fabric
+  # back up upside down.
+  max_travel_ms: "45000"
+  # If the position doesn't change by 2% within this time while the motor
+  # is on, stop and report a problem.
+  no_progress_ms: "3000"
+
+  # ---- POSITION ----
+  # Leave "false" until the calibrate_linear points below hold your own
+  # readings. Until then the firmware doesn't stop at a position or at
+  # 100% (only the past-full-open check below, the reed switch, stall
+  # current and the travel timer), and "Position" shows only "closed".
+  position_calibrated: "false"
+  # Past-full-open check (works before calibration too): while opening,
+  # the arm tilt keeps falling. Once the fabric starts rolling back up
+  # upside down the arms rise again, so if the tilt climbs this many
+  # degrees above the lowest it reached, stop at once.
+  overrun_tilt_deg: "4.0"
+
+  # ---- WIND (Z axis of the MPU-6050) ----
+  # "Wind Shake" is how far the Z reading jumps away from its smoothed
+  # value, in m/s² (biggest jump in each 100 ms). Watch it in HA on a
+  # breezy day and set the threshold above normal flapping.
+  wind_shake_threshold: "2.0"
+  # Retract when this many of the last 10 x 100 ms windows (1 second) are
+  # over the threshold (only while "Wind Auto-Retract" is on).
+  wind_hits: "3"
+
+  # Anemometer (optional): pulses per second -> mph.
+  wind_mph_per_hz: "1.492"
+
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - lambda: id(my_ota).set_auth_password("${awn_ota_pw}");
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret camper_awning_api_key
+
+ota:
+  - platform: esphome
+    id: my_ota
+    # one-time bridge: the board still has the wall-panel test firmware's password
+    password: !secret camper_wall_panel_ota_password
+
+logger:
+
+# MPU-6050 (GY-521) in the same box, a few cm from the ESP32, so I2C runs at
+# full speed. It sits on the bottom-row pins next to the other wiring; its
+# VCC is on 5 V (the GY-521 has its own 3.3 V regulator and pull-ups).
+i2c:
+  sda: GPIO33
+  scl: GPIO13
+  scan: true
+  frequency: 400kHz
+
+globals:
+  # Smoothed (gravity-only) accelerometer reading
+  - id: g_x
+    type: float
+    initial_value: 'NAN'
+  - id: g_y
+    type: float
+    initial_value: 'NAN'
+  - id: g_z
+    type: float
+    initial_value: 'NAN'
+  - id: z_peak                # biggest Z jump in the current 100 ms
+    type: float
+    initial_value: '0'
+  - id: shake_1s              # biggest Z jump in the last second (for HA)
+    type: float
+    initial_value: '0'
+  - id: win_bits              # last 10 x 100 ms windows, 1 = over threshold
+    type: uint16_t
+    initial_value: '0'
+  - id: awning_pos            # 0.0 closed .. 1.0 open (NAN until known)
+    type: float
+    initial_value: 'NAN'
+  # Motor run bookkeeping
+  - id: run_dir               # 1 = extending, -1 = retracting, 0 = stopped
+    type: int
+    initial_value: '0'
+  - id: run_start_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: run_start_pos
+    type: float
+    initial_value: 'NAN'
+  - id: last_progress_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: last_progress_pos
+    type: float
+    initial_value: 'NAN'
+  - id: target_pos            # set by a position command, -1 = none
+    type: float
+    initial_value: '-1'
+  - id: motor_zero_v
+    type: float
+    initial_value: 'NAN'
+  - id: motor_amps
+    type: float
+    initial_value: '0'
+  - id: stop_reason
+    type: std::string
+    initial_value: '""'
+  - id: min_tilt              # lowest Arm Tilt in this open run
+    type: float
+    initial_value: 'NAN'
+  - id: left_closed           # this open run has left the reed switch
+    type: bool
+    initial_value: 'false'
+
+binary_sensor:
+  # Closed sensor: sealed reed switch at the bottom of the wall rail, magnet
+  # on the knee end of the inner arm. Two wires of the 4-core cable bring it
+  # up to GPIO32 and GND (closes when the magnet is near).
+  - platform: gpio
+    pin:
+      number: GPIO32
+      mode: INPUT_PULLUP
+      inverted: true
+    name: "${friendly_name} Closed"
+    id: limit_closed
+    filters:
+      - delayed_on_off: 50ms
+    on_press:
+      - if:
+          condition:
+            lambda: 'return id(run_dir) == -1;'
+          then:
+            - lambda: 'id(stop_reason) = "Closed";'
+            - script.execute: stop_motor
+      # Reed closing while OPENING = it went past full open and rolled the
+      # fabric all the way back up upside down. Backup to the tilt check.
+      - if:
+          condition:
+            lambda: 'return id(run_dir) == 1 && id(left_closed);'
+          then:
+            - lambda: 'id(stop_reason) = "Problem: went past full open";'
+            - script.execute: stop_motor
+
+  # Optional rain sensor (not connected yet: reads dry).
+  - platform: gpio
+    pin:
+      number: GPIO14
+      mode: INPUT_PULLUP
+      inverted: true
+    name: "${friendly_name} Rain Detected"
+    device_class: moisture
+
+  - platform: template
+    name: "${friendly_name} Wind Detected"
+    device_class: safety
+    lambda: 'return __builtin_popcount(id(win_bits)) >= ${wind_hits};'
+    filters:
+      - delayed_off: 10s
+
+sensor:
+  - platform: mpu6050
+    address: 0x68
+    update_interval: 20ms
+    accel_x:
+      id: accel_x
+      internal: true
+    accel_y:
+      id: accel_y
+      internal: true
+    accel_z:
+      id: accel_z
+      internal: true
+
+  # Tilt of the board away from flat, from the smoothed gravity direction:
+  # about 90° when the awning is closed (box standing up) down to near 0°
+  # when it's fully open (box lying flat).
+  - platform: template
+    name: "${friendly_name} Arm Tilt"
+    id: arm_tilt
+    unit_of_measurement: "°"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    update_interval: 200ms
+    lambda: |-
+      float m = sqrtf(id(g_x) * id(g_x) + id(g_y) * id(g_y) + id(g_z) * id(g_z));
+      if (isnan(m) || m < 1.0f) return {};
+      return acosf(clamp(fabsf(id(g_z)) / m, 0.0f, 1.0f)) * 57.2958f;
+    filters:
+      - or:
+          - throttle: 300s
+          - delta: 0.5
+
+  # 0-100 % from the tilt. The arm's hinges make tilt and extension
+  # non-linear, so calibrate_linear (method: exact) joins the dots between
+  # measured points. To calibrate: stop the awning at closed, 25/50/75 %
+  # and full out (measure the extension with a tape), read "Arm Tilt" in
+  # Home Assistant at each stop, and put each pair below as
+  # "tilt -> percent", smallest tilt first (ESPHome requires that order).
+  - platform: template
+    id: tilt_position
+    internal: true
+    update_interval: 100ms
+    lambda: 'return id(arm_tilt).get_raw_state();'
+    filters:
+      - calibrate_linear:
+          method: exact
+          datapoints:
+            # Placeholders (straight line) - replace with your readings
+            - 8.0 -> 100.0
+            # - 30.0 -> 75.0
+            # - 50.0 -> 50.0
+            # - 70.0 -> 25.0
+            - 88.0 -> 0.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+  - platform: template
+    name: "${friendly_name} Position"
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      if (isnan(id(awning_pos))) return {};
+      return id(awning_pos) * 100.0f;
+    filters:
+      - or:
+          - throttle: 60s
+          - delta: 1.0
+
+  - platform: template
+    name: "${friendly_name} Wind Shake"
+    unit_of_measurement: "m/s²"
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: 1s
+    lambda: 'return id(shake_1s);'
+    filters:
+      - or:
+          - throttle: 300s
+          - delta: 0.3
+
+  # Motor current. Raw ADC is internal; the published value is throttled.
+  - platform: adc
+    pin: GPIO39
+    id: motor_raw_v
+    internal: true
+    update_interval: 50ms
+    attenuation: 12db
+    filters:
+      - sliding_window_moving_average:
+          window_size: 3
+          send_every: 1
+    on_value:
+      then:
+        - lambda: |-
+            if (isnan(id(motor_zero_v))) id(motor_zero_v) = x;
+            float amps = fabsf((x - id(motor_zero_v)) * ${motor_amps_per_volt});
+            id(motor_amps) = amps;
+            if (id(run_dir) == 0) {
+              // Motor off: slowly learn the zero-current voltage, but only
+              // from readings close to it. A run from the wall rocker must
+              // not be learned as "zero".
+              if (fabsf(x - id(motor_zero_v)) < 0.05f)
+                id(motor_zero_v) += 0.02f * (x - id(motor_zero_v));
+              return;
+            }
+            if (millis() - id(run_start_ms) < ${inrush_ignore_ms}) return;
+            if (amps > ${motor_stall_amps}) {
+              // Only closing can stall at an end (closed tight). Opening has
+              // no end stop, so a stall while opening is always a problem.
+              bool known = !isnan(id(awning_pos));
+              if (id(run_dir) == -1 && (id(limit_closed).state || !known || id(awning_pos) < 0.1f)) {
+                id(stop_reason) = "Closed";
+              } else if (!known) {
+                id(stop_reason) = "Problem: stalled while opening";
+              } else {
+                char buf[48];
+                snprintf(buf, sizeof(buf), "Problem: stalled at %d%%", (int) (id(awning_pos) * 100));
+                id(stop_reason) = buf;
+              }
+              id(stop_motor).execute();
+            }
+
+  - platform: template
+    name: "${friendly_name} Motor Current"
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: 'return id(motor_amps);'
+    filters:
+      - or:
+          - throttle: 300s
+          - delta: 0.3
+
+  # Seconds the last full open / full close took (closed <-> open).
+  # A run that's much slower than usual means trouble.
+  - platform: template
+    name: "${friendly_name} Last Open Time"
+    id: last_open_time
+    unit_of_measurement: "s"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "${friendly_name} Last Close Time"
+    id: last_close_time
+    unit_of_measurement: "s"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    update_interval: never
+
+  # Optional cup anemometer (not connected yet: reads 0).
+  - platform: pulse_counter
+    pin:
+      number: GPIO27
+      mode: INPUT_PULLUP
+    name: "${friendly_name} Wind Speed"
+    unit_of_measurement: "mph"
+    update_interval: 5s
+    filters:
+      # pulse_counter reports pulses/min -> Hz -> mph
+      - lambda: return (x / 60.0) * ${wind_mph_per_hz};
+
+text_sensor:
+  # "Open", "Closed", "Opening", "Closing", "Stopped at 40%", or
+  # "Problem: ..." / "Wind: ..." - HA can alert on those last two.
+  - platform: template
+    name: "${friendly_name} Status"
+    id: awning_status
+    update_interval: never
+
+# ============================================
+# Motor driver inputs (BTS7960). Extend and retract can never be on
+# together, and wait 500 ms before reversing. Always off after a reboot
+# or power loss. Both off = both motor leads at ground (braked).
+# ============================================
+switch:
+  - platform: gpio
+    pin:
+      number: GPIO25
+      inverted: false
+    id: motor_extend
+    name: "${friendly_name} Motor Extend"
+    internal: true
+    restore_mode: ALWAYS_OFF
+    interlock: [motor_retract]
+    interlock_wait_time: 500ms
+  - platform: gpio
+    pin:
+      number: GPIO26
+      inverted: false
+    id: motor_retract
+    name: "${friendly_name} Motor Retract"
+    internal: true
+    restore_mode: ALWAYS_OFF
+    interlock: [motor_extend]
+    interlock_wait_time: 500ms
+
+  - platform: template
+    name: "${friendly_name} Wind Auto-Retract"
+    id: wind_auto_retract
+    icon: mdi:weather-windy
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+script:
+  - id: run_motor
+    mode: restart
+    parameters:
+      dir: int
+    then:
+      - switch.turn_off: motor_extend
+      - switch.turn_off: motor_retract
+      - delay: 300ms
+      - lambda: |-
+          id(run_dir) = dir;
+          id(run_start_ms) = millis();
+          id(last_progress_ms) = millis();
+          id(run_start_pos) = id(awning_pos);
+          id(last_progress_pos) = id(awning_pos);
+          id(min_tilt) = NAN;
+          id(left_closed) = false;
+          id(stop_reason) = "";
+          id(awning_status).publish_state(dir == 1 ? "Opening" : "Closing");
+      - if:
+          condition:
+            lambda: 'return dir == 1;'
+          then:
+            - switch.turn_on: motor_extend
+          else:
+            - switch.turn_on: motor_retract
+
+  - id: stop_motor
+    mode: single
+    then:
+      - switch.turn_off: motor_extend
+      - switch.turn_off: motor_retract
+      - lambda: |-
+          if (id(run_dir) != 0) {
+            float secs = (millis() - id(run_start_ms)) / 1000.0f;
+            // Timing only counts for a full run from one end to the other
+            if (id(run_dir) == 1 && id(stop_reason) == "Open" &&
+                !isnan(id(run_start_pos)) && id(run_start_pos) < 0.05f)
+              id(last_open_time).publish_state(secs);
+            if (id(run_dir) == -1 && id(stop_reason) == "Closed" &&
+                !isnan(id(run_start_pos)) && id(run_start_pos) > 0.95f)
+              id(last_close_time).publish_state(secs);
+          }
+          id(run_dir) = 0;
+          id(target_pos) = -1;
+          std::string s = id(stop_reason);
+          if (s.empty()) {
+            if (isnan(id(awning_pos))) s = "Stopped";
+            else {
+              char buf[32];
+              snprintf(buf, sizeof(buf), "Stopped at %d%%", (int) (id(awning_pos) * 100));
+              s = buf;
+            }
+          }
+          id(awning_status).publish_state(s);
+          id(awning_cover).current_operation = COVER_OPERATION_IDLE;
+          id(awning_cover).publish_state();
+
+interval:
+  # Every 20 ms: smooth out gravity and catch the fast Z jumps (wind shake)
+  - interval: 20ms
+    then:
+      - lambda: |-
+          float x = id(accel_x).state, y = id(accel_y).state, z = id(accel_z).state;
+          if (isnan(x) || isnan(y) || isnan(z)) return;
+          if (isnan(id(g_z))) { id(g_x) = x; id(g_y) = y; id(g_z) = z; }
+          float dz = fabsf(z - id(g_z));
+          if (dz > id(z_peak)) id(z_peak) = dz;
+          // ~0.4 s smoothing: follows the arm moving, ignores the shake
+          id(g_x) += 0.05f * (x - id(g_x));
+          id(g_y) += 0.05f * (y - id(g_y));
+          id(g_z) += 0.05f * (z - id(g_z));
+
+  # Every 100 ms: position, travel checks, target stops and the wind window
+  - interval: 100ms
+    then:
+      - lambda: |-
+          // --- position ---
+          float t = id(tilt_position).state;
+          if (id(limit_closed).state) id(awning_pos) = 0.0f;
+          else if (${position_calibrated} && !isnan(t)) id(awning_pos) = clamp(t / 100.0f, 0.0f, 1.0f);
+          else id(awning_pos) = NAN;
+
+          // --- wind: slide the 1-second window ---
+          static uint8_t n = 0;
+          static float peak_s = 0;
+          bool over = id(z_peak) > ${wind_shake_threshold};
+          id(win_bits) = ((id(win_bits) << 1) | (over ? 1 : 0)) & 0x3FF;
+          if (id(z_peak) > peak_s) peak_s = id(z_peak);
+          id(z_peak) = 0;
+          if (++n >= 10) { id(shake_1s) = peak_s; peak_s = 0; n = 0; }
+          // The motor shakes the arm too: no wind check while it runs,
+          // whether from the firmware or the wall rocker.
+          // run_motor waits 300 ms before it sets run_dir: count that as running,
+          // or steady shake would keep restarting it and the motor never starts.
+          bool motor_on = id(run_dir) != 0 || id(run_motor).is_running() || id(motor_amps) > ${manual_run_amps};
+          if (motor_on) id(win_bits) = 0;
+          else if (__builtin_popcount(id(win_bits)) >= ${wind_hits} && id(wind_auto_retract).state &&
+                   !id(limit_closed).state && !(!isnan(id(awning_pos)) && id(awning_pos) < 0.03f)) {
+            id(win_bits) = 0;
+            ESP_LOGW("awning", "Wind shake - retracting");
+            id(run_motor).execute(-1);
+            id(awning_status).publish_state("Wind: auto-retracting");
+            return;
+          }
+
+          // --- travel checks ---
+          if (id(run_dir) == 0) return;
+          uint32_t now = millis();
+          float p = id(awning_pos);
+          char buf[48];
+          // 1. Backstop timer
+          if (now - id(run_start_ms) > ${max_travel_ms}) {
+            id(stop_reason) = "Problem: took too long";
+            id(stop_motor).execute();
+            return;
+          }
+          // 2. Went past full open. The motor doesn't stall at the end: it
+          // keeps turning and rolls the fabric back up upside down, and the
+          // arms rise again. Uses the raw tilt, so it works before
+          // calibration. Armed only once the arm is below 60°, so a closed
+          // arm that sits a little past vertical can't trip it at the start.
+          if (id(run_dir) == 1) {
+            if (!id(limit_closed).state) id(left_closed) = true;
+            float tilt = id(arm_tilt).get_raw_state();
+            if (!isnan(tilt)) {
+              if (isnan(id(min_tilt)) || tilt < id(min_tilt)) id(min_tilt) = tilt;
+              else if (id(min_tilt) < 60.0f && tilt > id(min_tilt) + ${overrun_tilt_deg}) {
+                id(stop_reason) = "Problem: went past full open";
+                id(stop_motor).execute();
+                return;
+              }
+            }
+          }
+          if (isnan(p)) return;
+          // 3. Reached full open (calibrated 100%)
+          if (id(run_dir) == 1 && p >= 0.99f) {
+            id(stop_reason) = "Open";
+            id(stop_motor).execute();
+            return;
+          }
+          // 4. Reached a position command
+          if (id(target_pos) >= 0 &&
+              ((id(run_dir) == 1 && p >= id(target_pos)) || (id(run_dir) == -1 && p <= id(target_pos)))) {
+            id(stop_motor).execute();
+            return;
+          }
+          // 5. Not moving (jammed, binding, motor problem). Not at the closed
+          // end: the reed can hold 0% for a moment as it starts out, and the
+          // last bit of a close may read 0% - the reed, stall or timer end those.
+          bool closed_end = id(limit_closed).state || (id(run_dir) == -1 && p <= 0.02f);
+          if (closed_end || isnan(id(last_progress_pos)) || fabsf(p - id(last_progress_pos)) >= 0.02f) {
+            id(last_progress_pos) = p;
+            id(last_progress_ms) = now;
+          } else if (now - id(last_progress_ms) > ${no_progress_ms}) {
+            snprintf(buf, sizeof(buf), "Problem: stuck at %d%%", (int) (p * 100));
+            id(stop_reason) = buf;
+            id(stop_motor).execute();
+            return;
+          }
+          id(awning_cover).current_operation = id(run_dir) == 1 ? COVER_OPERATION_OPENING : COVER_OPERATION_CLOSING;
+
+cover:
+  - platform: template
+    name: "${friendly_name}"
+    id: awning_cover
+    device_class: awning
+    has_position: true
+    lambda: |-
+      if (id(limit_closed).state) return COVER_CLOSED;
+      if (isnan(id(awning_pos))) return {};
+      return id(awning_pos);
+    open_action:
+      - if:
+          condition:
+            lambda: 'return !(!isnan(id(awning_pos)) && id(awning_pos) >= 0.99f);'
+          then:
+            - script.execute:
+                id: run_motor
+                dir: 1
+    close_action:
+      - if:
+          condition:
+            lambda: 'return !id(limit_closed).state;'
+          then:
+            - script.execute:
+                id: run_motor
+                dir: -1
+    stop_action:
+      - lambda: 'id(stop_reason) = "";'
+      - script.execute: stop_motor
+    position_action:
+      - lambda: |-
+          if (isnan(id(awning_pos))) return;
+          if (pos > id(awning_pos) + 0.02f) {
+            id(run_motor).execute(1);
+            id(target_pos) = pos;
+          } else if (pos < id(awning_pos) - 0.02f) {
+            id(run_motor).execute(-1);
+            id(target_pos) = pos;
+          }

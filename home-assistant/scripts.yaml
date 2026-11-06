@@ -1,0 +1,863 @@
+camper_preheat_water_heater:
+  alias: "Camper: Preheat Water Heater (15 min)"
+  icon: mdi:water-boiler
+  description: >-
+    Preheats the camper water heater: turns the gas water heater on for 15 minutes,
+    then turns it off automatically. Use when asked to preheat or heat up the water.
+    If the water heater is already on, it is left on and just sends a notification;
+    running this never turns the water heater off.
+  mode: parallel
+  sequence:
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: switch.camper_wall_panel_camper_wall_panel_water_heater_gas
+              state: "on"
+          sequence:
+            - action: script.camper_notify_both
+              data:
+                title: "Preheat cancelled"
+                message: "Water heater is already heating - left it on."
+      default:
+        - action: switch.turn_on
+          target:
+            entity_id: switch.camper_wall_panel_camper_wall_panel_water_heater_gas
+        - action: script.camper_notify_both
+          data:
+            title: "Water heater firing \U0001f525"
+            message: "Gas on - hot water in ~15 min. No flame sensor wired, so glance at the unit if it matters."
+        - delay: "00:15:00"
+        - action: switch.turn_off
+          target:
+            entity_id: switch.camper_wall_panel_camper_wall_panel_water_heater_gas
+
+camper_set_location_here:
+  alias: "Camper: Set Home Location Here"
+  icon: mdi:map-marker-radius
+  mode: single
+  description: >-
+    Moves the Home zone to where Morris's phone is right now. Run this after
+    parking the camper at a new spot so home/away detection and the weather
+    forecast follow the camper.
+  sequence:
+    - action: homeassistant.set_location
+      data:
+        latitude: "{{ state_attr('device_tracker.sm_s906u', 'latitude') }}"
+        longitude: "{{ state_attr('device_tracker.sm_s906u', 'longitude') }}"
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        message: TTS
+        data:
+          priority: high
+          tts_text: "Camper location updated. Home is now set to where your phone is."
+          media_stream: alarm_stream
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        title: "Camper location updated"
+        message: "Home is now set to where your phone is."
+        data:
+          priority: high
+
+camper_notify_both:
+  alias: "Camper: Notify Both Phones"
+  icon: mdi:cellphone-message
+  mode: parallel
+  description: "Internal helper - sends one notification to Morris's and Nadine's phones."
+  fields:
+    title: { description: "Notification title", example: "Hello" }
+    message: { description: "Notification text", example: "Something happened" }
+    urgent: { description: "true = high priority / alarm channel", example: false }
+    actions: { description: "Optional notification buttons (list of action/title pairs)", example: "[{'action': 'RETRACT_AWNING', 'title': 'Retract awning'}]" }
+  sequence:
+    # No custom Android channel: a new channel can be created muted on the phone
+    # (happened on Morris's S22), so everything uses the app's default channel.
+    - variables:
+        extra: >-
+          {% set d = {'priority': 'high', 'ttl': 0} if urgent | default(false) | bool else {} %}
+          {% set b = actions | default([]) %}
+          {% if b is string %}{% set b = [] %}{% endif %}
+          {{ dict(d, actions=b) if b | count > 0 else d }}
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        message: TTS
+        data:
+          priority: high
+          tts_text: "{{ (title ~ '. ' ~ message) | replace('°', ' degrees') | regex_replace('[^ -~]', '') }}"
+          media_stream: alarm_stream
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data: { title: "{{ title }}", message: "{{ message }}", data: "{{ dict(extra, priority='high') }}" }
+    - action: notify.mobile_app_home
+      continue_on_error: true
+      data:
+        message: TTS
+        data:
+          tts_text: "{{ (title ~ '. ' ~ message) | replace('°', ' degrees') | regex_replace('[^ -~]', '') }}"
+          media_stream: alarm_stream
+    - action: notify.mobile_app_home
+      continue_on_error: true
+      data: { title: "{{ title }}", message: "{{ message }}", data: "{{ extra }}" }
+
+camper_goodnight:
+  alias: "Goodnight"
+  icon: mdi:weather-night
+  mode: single
+  description: >-
+    Bedtime routine for the camper. Turns off the TV and coffee pot, turns on
+    the porch light, and sets the thermostat to the sleep temperatures for 8
+    hours, then back to the daytime ones. Use when someone says goodnight or
+    is going to bed.
+  sequence:
+    - action: media_player.turn_off
+      target: { entity_id: media_player.bedroom_50_hisense_roku_tv }
+      continue_on_error: true
+    - action: switch.turn_off
+      target: { entity_id: switch.smart_switch_1 }
+      continue_on_error: true
+    - action: light.turn_on
+      target: { entity_id: light.camper_led_strip }
+      continue_on_error: true
+    # Sleep temperatures go into the Smart Auto setpoints (the ones every mode
+    # uses). The daytime ones are saved first, and the "Goodnight: Sleep
+    # Temperatures End" automation puts them back 8 hours later.
+    - if:
+        - condition: template
+          value_template: "{{ as_timestamp(states('input_datetime.camper_sleep_until'), 0) < as_timestamp(now()) }}"
+      then:
+        - action: input_number.set_value
+          target: { entity_id: input_number.camper_day_heat_setpoint }
+          data: { value: "{{ states('input_number.camper_smart_heat_to') | int }}" }
+        - action: input_number.set_value
+          target: { entity_id: input_number.camper_day_cool_setpoint }
+          data: { value: "{{ states('input_number.camper_smart_cool_to') | int }}" }
+    - action: input_datetime.set_datetime
+      target: { entity_id: input_datetime.camper_sleep_until }
+      data: { datetime: "{{ (now() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M:%S') }}" }
+    - action: input_number.set_value
+      target: { entity_id: input_number.camper_smart_heat_to }
+      data: { value: "{{ states('input_number.camper_sleep_heat_setpoint') | int }}" }
+    - action: input_number.set_value
+      target: { entity_id: input_number.camper_smart_cool_to }
+      data: { value: "{{ states('input_number.camper_sleep_cool_setpoint') | int }}" }
+
+camper_dog_tv:
+  alias: "Dog TV"
+  icon: mdi:dog
+  mode: single
+  description: >-
+    Puts dog TV on the 50" TV for the dog: turns the TV on and plays the dog
+    video on YouTube. Leaves the TV alone if it's already playing something.
+    Use when asked to put on dog TV or something for the dog to watch.
+  fields:
+    force:
+      description: "true = start dog TV even if something else is on"
+      example: false
+  sequence:
+    - variables:
+        tv: media_player.bedroom_50_hisense_roku_tv
+        video: "{{ states('input_text.camper_dog_tv_video') }}"
+        busy: >-
+          {{ states(tv) == 'playing'
+             or (states(tv) in ['on', 'paused'] and (state_attr(tv, 'source') or 'Home') != 'Home') }}
+    - condition: template
+      value_template: "{{ (force | default(false) | bool) or not busy }}"
+    - if:
+        - condition: template
+          value_template: "{{ states(tv) in ['off', 'standby', 'unavailable', 'unknown'] }}"
+      then:
+        - action: media_player.turn_on
+          target: { entity_id: "{{ tv }}" }
+          continue_on_error: true
+        - delay: "00:00:15"
+    - action: input_text.set_value
+      target: { entity_id: input_text.camper_tv_music }
+      data: { value: "" }
+      continue_on_error: true
+    - action: media_player.play_media
+      target: { entity_id: "{{ tv }}" }
+      data:
+        media_content_type: app
+        media_content_id: "837"
+        extra:
+          content_id: "{{ video }}"
+          media_type: live
+      continue_on_error: true
+    - delay: "00:01:00"
+    - if:
+        - condition: template
+          value_template: "{{ not is_state(tv, 'playing') }}"
+      then:
+        - action: script.camper_notify_both
+          data:
+            title: "📺 Dog TV didn't start"
+            message: "Tried to put YouTube dog TV on the 50\" TV but it isn't playing (TV is {{ states(tv) }}). Check the TV."
+
+camper_leak_reset:
+  alias: "Leak Reset"
+  icon: mdi:water-check
+  mode: single
+  description: "Turns the water back on after a leak shutoff - only once every leak probe is dry."
+  sequence:
+    - if:
+        - condition: state
+          entity_id: binary_sensor.camper_water_leak
+          state: "on"
+      then:
+        - action: script.camper_notify_both
+          data:
+            title: "\U0001F4A7 Water still off"
+            message: "Still wet: {{ state_attr('binary_sensor.camper_water_leak', 'wet') | join(', ') }}. Dry the probe and press Leak Reset again."
+        - stop: "A leak probe is still wet"
+    - action: esphome.camper_wall_panel_leak_reset
+
+camper_shopping_toggle:
+  alias: "Shopping: Quick Add / Remove"
+  icon: mdi:cart-plus
+  mode: queued
+  description: "Quick-add buttons - puts the item on the shopping list, or takes it off if it's already there. A checked-off item with the same name is brought back instead of making a duplicate."
+  fields:
+    item: { description: "Item name", example: "Milk" }
+  sequence:
+    - action: todo.get_items
+      target: { entity_id: todo.shopping_list }
+      data: { status: [needs_action, completed] }
+      response_variable: r
+    - variables:
+        all: "{{ r['todo.shopping_list']['items'] }}"
+        open_match: "{% set ns = namespace(m='') %}{% for i in all if i.status == 'needs_action' and i.summary | lower == item | lower %}{% set ns.m = i.summary %}{% endfor %}{{ ns.m }}"
+        done_match: "{% set ns = namespace(m='') %}{% for i in all if i.status == 'completed' and i.summary | lower == item | lower %}{% set ns.m = i.summary %}{% endfor %}{{ ns.m }}"
+    - choose:
+        - conditions: "{{ open_match != '' }}"
+          sequence:
+            - action: todo.remove_item
+              target: { entity_id: todo.shopping_list }
+              data: { item: "{{ open_match }}" }
+        - conditions: "{{ done_match != '' }}"
+          sequence:
+            - action: todo.update_item
+              target: { entity_id: todo.shopping_list }
+              data: { item: "{{ done_match }}", status: needs_action }
+      default:
+        - action: todo.add_item
+          target: { entity_id: todo.shopping_list }
+          data: { item: "{{ item }}" }
+
+camper_shopping_got_it:
+  alias: "Shopping: Got It (picture list)"
+  icon: mdi:cart-check
+  mode: queued
+  description: "Picture list on the Shopping page - checks off the item in that slot (index into sensor.shopping_list_items)."
+  fields:
+    index: { description: "Slot number, 0 = first item", example: 0 }
+  sequence:
+    - variables:
+        item: "{{ (state_attr('sensor.shopping_list_items', 'items') or [])[index | int(0)] | default('') }}"
+    - condition: template
+      value_template: "{{ item != '' }}"
+    - action: todo.update_item
+      target: { entity_id: todo.shopping_list }
+      data: { item: "{{ item }}", status: completed }
+
+camper_task_done:
+  alias: "Mark Care Task Done"
+  icon: mdi:check-circle
+  mode: queued
+  description: "Internal - records today as the last-done date for a Daisy or camper upkeep task."
+  fields:
+    task: { description: "Task id from camper_tasks.jinja, e.g. daisy_heartworm", example: daisy_heartworm }
+  sequence:
+    - action: input_datetime.set_datetime
+      target: { entity_id: "input_datetime.task_{{ task }}" }
+      data: { date: "{{ now().date().isoformat() }}" }
+
+camper_auto_setpoint:
+  alias: "Thermostat: Auto Setpoint Step"
+  icon: mdi:thermostat-auto
+  mode: queued
+  max: 20
+  description: >-
+    Steps the Auto-mode heat or cool setpoint by 1°F. Cool can equal heat
+    (72/72 is fine on this thermostat; the 4°F minimum was removed 2026-10-11).
+    Pushing one past the other moves the other one along. Not used by the
+    dashboard any more (the pills step camper_smart_*_to).
+  fields:
+    side: { description: "heat or cool", example: heat }
+    step: { description: "+1 or -1", example: 1 }
+  sequence:
+    - variables:
+        e: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+        gap: 0
+        lo: "{{ state_attr(e, 'target_temp_low') | int(68) }}"
+        hi: "{{ state_attr(e, 'target_temp_high') | int(74) }}"
+        new_lo: >-
+          {% if side == 'heat' %}{{ [[lo + step | int, 45] | max, 95 - gap] | min }}
+          {% else %}{% set h = [[hi + step | int, 45 + gap] | max, 95] | min %}{{ [lo, h - gap] | min }}{% endif %}
+        new_hi: >-
+          {% if side == 'cool' %}{{ [[hi + step | int, 45 + gap] | max, 95] | min }}
+          {% else %}{% set l = [[lo + step | int, 45] | max, 95 - gap] | min %}{{ [hi, l + gap] | max }}{% endif %}
+    - condition: template
+      value_template: "{{ is_state(e, 'auto') and (new_lo | int != lo or new_hi | int != hi) }}"
+    - action: climate.set_temperature
+      target: { entity_id: "{{ e }}" }
+      data:
+        target_temp_low: "{{ new_lo | int }}"
+        target_temp_high: "{{ new_hi | int }}"
+
+camper_smart_auto_apply:
+  alias: "Smart Auto: Apply Mode"
+  icon: mdi:thermostat-auto
+  mode: queued
+  description: "Internal - puts the thermostat in cool or heat at the Smart Auto setpoint."
+  fields:
+    mode: { description: "cool or heat", example: cool }
+    reason: { description: "why (for the notification)", example: "it rose to 76°F" }
+  sequence:
+    - variables:
+        e: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+        target: "{{ states('input_number.camper_smart_cool_to' if mode == 'cool' else 'input_number.camper_smart_heat_to') | int }}"
+        changing: "{{ states(e) != mode }}"
+    - if:
+        - condition: template
+          value_template: "{{ changing }}"
+      then:
+        - action: climate.set_hvac_mode
+          target: { entity_id: "{{ e }}" }
+          data: { hvac_mode: "{{ mode }}" }
+        - delay: "00:00:08"
+    - if:
+        - condition: template
+          value_template: "{{ state_attr(e, 'temperature') != target }}"
+      then:
+        - action: climate.set_temperature
+          target: { entity_id: "{{ e }}" }
+          data: { temperature: "{{ target }}" }
+    - condition: template
+      value_template: "{{ changing }}"
+    - variables:
+        msg:
+          title: "{{ '❄️ Smart Auto: switched to Cool' if mode == 'cool' else '🔥 Smart Auto: switched to Heat' }}"
+          message: "Set to {{ target }}°F because {{ reason }}."
+    # Only tell whoever is away (don't wake anyone up at home)
+    - if:
+        - condition: template
+          value_template: "{{ not is_state('person.morris', 'home') }}"
+      then:
+        - action: notify.mobile_app_morris_sm_s906u
+          continue_on_error: true
+          data:
+            message: TTS
+            data:
+              priority: high
+              tts_text: "{{ (msg.title ~ '. ' ~ msg.message) | replace('°', ' degrees') | regex_replace('[^ -~]', '') }}"
+              media_stream: alarm_stream
+        - action: notify.mobile_app_morris_sm_s906u
+          continue_on_error: true
+          data: "{{ dict(msg, data={'priority': 'high'}) }}"
+    - if:
+        - condition: template
+          value_template: "{{ not is_state('person.nadine', 'home') }}"
+      then:
+        - action: notify.mobile_app_home
+          continue_on_error: true
+          data:
+            message: TTS
+            data:
+              tts_text: "{{ (msg.title ~ '. ' ~ msg.message) | replace('°', ' degrees') | regex_replace('[^ -~]', '') }}"
+              media_stream: alarm_stream
+        - action: notify.mobile_app_home
+          continue_on_error: true
+          data: "{{ msg }}"
+
+# ---- Simple thermostat controls (Climate page), 2026-10-08 ----
+# input_number.camper_smart_cool_to / _heat_to are THE setpoints for Cool,
+# Heat and Auto; the Smart Auto automations push them to the thermostat.
+camper_thermostat_set_mode:
+  alias: "Thermostat: Set Mode"
+  icon: mdi:thermostat
+  mode: restart
+  description: "Off, Cool, Heat or Auto (the thermostat's own Auto). Also dry / fan_only."
+  fields:
+    mode: { description: "off, cool, heat, auto, dry, fan_only", example: cool }
+  sequence:
+    - variables:
+        e: climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate
+        cur: "{{ state_attr(e, 'current_temperature') | float(72) }}"
+        mid: "{{ ((states('input_number.camper_smart_heat_to') | float(68)) + (states('input_number.camper_smart_cool_to') | float(72))) / 2 }}"
+    - choose:
+        # Auto = the thermostat's own Auto (2026-10-11; was Smart Auto). Send
+        # Heat to / Cool to first so it never starts on old Auto setpoints.
+        - conditions: "{{ mode == 'auto' }}"
+          sequence:
+            - action: input_boolean.turn_off
+              target: { entity_id: input_boolean.camper_smart_auto }
+            - action: climate.set_temperature
+              target: { entity_id: "{{ e }}" }
+              data:
+                target_temp_low: "{{ states('input_number.camper_smart_heat_to') | int }}"
+                target_temp_high: "{{ states('input_number.camper_smart_cool_to') | int }}"
+            - action: climate.set_hvac_mode
+              target: { entity_id: "{{ e }}" }
+              data: { hvac_mode: auto }
+        - conditions: "{{ mode in ['cool', 'heat'] }}"
+          sequence:
+            - action: input_boolean.turn_off
+              target: { entity_id: input_boolean.camper_smart_auto }
+            - action: script.camper_smart_auto_apply
+              data: { mode: "{{ mode }}", reason: "it was picked on the dashboard" }
+      default:
+        - action: input_boolean.turn_off
+          target: { entity_id: input_boolean.camper_smart_auto }
+        - action: climate.set_hvac_mode
+          target: { entity_id: "{{ e }}" }
+          data: { hvac_mode: "{{ mode }}" }
+
+camper_thermostat_step:
+  alias: "Thermostat: Up / Down"
+  icon: mdi:thermometer-plus
+  mode: queued
+  max: 20
+  description: "Raise or lower whatever the thermostat is set to right now (cool or heat) by 1°F."
+  fields:
+    step: { description: "1 or -1", example: 1 }
+  sequence:
+    - variables:
+        m: "{{ states('climate.easytouch_31_7f_98_77_f8_d1_easytouch_climate') }}"
+        target: "{{ 'input_number.camper_smart_cool_to' if m == 'cool' else ('input_number.camper_smart_heat_to' if m == 'heat' else none) }}"
+    - condition: template
+      value_template: "{{ target is not none }}"
+    - action: "input_number.{{ 'increment' if step | int > 0 else 'decrement' }}"
+      target: { entity_id: "{{ target }}" }
+
+camper_thermostat_nudge:
+  alias: "Thermostat: Cool-to / Heat-to Step"
+  icon: mdi:thermometer-plus
+  mode: queued
+  max: 20
+  description: >-
+    The -/+ on the dashboard's Cool to / Heat to pills. Steps
+    input_number.camper_smart_*_to by 1°F in every mode (Auto too, since
+    2026-10-11); smart_auto_setpoint_changed sends it to the thermostat.
+  fields:
+    side: { description: "cool or heat", example: cool }
+    step: { description: "1 or -1", example: 1 }
+  sequence:
+    - action: "input_number.{{ 'increment' if step | int > 0 else 'decrement' }}"
+      target: { entity_id: "input_number.camper_smart_{{ side }}_to" }
+
+camper_thermostat_set_pair:
+  alias: "Thermostat: Set Heat To / Cool To"
+  icon: mdi:thermometer
+  mode: queued
+  description: >-
+    Sets both Smart Auto setpoints, in the order that keeps them from crossing
+    (smart_auto_setpoint_changed would otherwise push the other one).
+  fields:
+    heat: { description: "Heat to °F", example: 72 }
+    cool: { description: "Cool to °F", example: 73 }
+  sequence:
+    - if: "{{ heat | int >= states('input_number.camper_smart_cool_to') | int }}"
+      then:
+        - action: input_number.set_value
+          target: { entity_id: input_number.camper_smart_cool_to }
+          data: { value: "{{ cool | int }}" }
+        - action: input_number.set_value
+          target: { entity_id: input_number.camper_smart_heat_to }
+          data: { value: "{{ heat | int }}" }
+      else:
+        - action: input_number.set_value
+          target: { entity_id: input_number.camper_smart_heat_to }
+          data: { value: "{{ heat | int }}" }
+        - action: input_number.set_value
+          target: { entity_id: input_number.camper_smart_cool_to }
+          data: { value: "{{ cool | int }}" }
+
+camper_ceiling_fan_hold:
+  alias: "Ceiling Fan: Lock / Unlock"
+  icon: mdi:fan-auto
+  mode: single
+  description: >-
+    Double-tap on the fan button or badge. If the fan is in Auto, locks it the way
+    it is right now (on -> Stay On, off -> Stay Off) so the temperature automation
+    leaves it alone. If it's already locked, unlocks it (back to Auto).
+  sequence:
+    - action: input_select.select_option
+      target: { entity_id: input_select.camper_ceiling_fan_mode }
+      data:
+        option: >-
+          {% if not is_state('input_select.camper_ceiling_fan_mode', 'Auto') %}Auto
+          {%- elif is_state('switch.ceiling_fan', 'on') %}Stay On{% else %}Stay Off{% endif %}
+
+read_aloud:
+  alias: "Read a text file aloud"
+  icon: mdi:book-open-variant
+  description: >-
+    Reads a .txt file from www/read_aloud on the camper stereo, a few sentences
+    at a time so long files don't overload Piper on the Jetson.
+  mode: restart
+  fields:
+    file:
+      description: "File name, like story.txt. Leave empty to use the one picked on the dashboard."
+      example: "story.txt"
+  sequence:
+    - variables:
+        f: "{{ file if file is defined and file else states('input_select.read_aloud_file') }}"
+    - if:
+        - condition: template
+          value_template: "{{ not f.lower().endswith('.txt') }}"
+      then:
+        - action: tts.speak
+          target: { entity_id: tts.piper }
+          data:
+            media_player_entity_id: media_player.camper_stereo
+            message: "There are no text files to read yet."
+        - stop: "No .txt file picked"
+    - action: rest_command.read_aloud_text
+      data: { file: "{{ f }}" }
+      response_variable: r
+    - variables:
+        # Split into chunks of about 500 characters on sentence/line breaks.
+        chunks: >-
+          {% set text = (r.content if r.status == 200 and r.content is string else '') %}
+          {% set ns = namespace(out=[], cur='') %}
+          {% for para in text.replace('\r', '').split('\n') %}
+            {% for s in para.replace('. ', '.\x1f').replace('? ', '?\x1f').replace('! ', '!\x1f').split('\x1f') %}
+              {% set s = s | trim %}
+              {% if s %}
+                {% if ns.cur and (ns.cur | length) + (s | length) > 500 %}
+                  {% set ns.out = ns.out + [ns.cur] %}
+                  {% set ns.cur = s %}
+                {% else %}
+                  {% set ns.cur = (ns.cur ~ ' ' ~ s) | trim %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+          {% if ns.cur %}{% set ns.out = ns.out + [ns.cur] %}{% endif %}
+          {{ ns.out }}
+    - if:
+        - condition: template
+          value_template: "{{ r.status != 200 or chunks | count == 0 }}"
+      then:
+        - action: tts.speak
+          target: { entity_id: tts.piper }
+          data:
+            media_player_entity_id: media_player.camper_stereo
+            message: "{{ 'Sorry, I could not open ' ~ f ~ '.' if r.status != 200 else 'That file is empty.' }}"
+        - stop: "Nothing to read"
+    - repeat:
+        for_each: "{{ chunks }}"
+        sequence:
+          - action: tts.speak
+            target: { entity_id: tts.piper }
+            data:
+              media_player_entity_id: media_player.camper_stereo
+              message: "{{ repeat.item }}"
+              cache: false
+          # Wait for this piece to start (up to 60 s), then to finish (up to
+          # 5 min), polling VLC every second so the next piece follows quickly.
+          - repeat:
+              sequence:
+                - delay: 1
+                - action: homeassistant.update_entity
+                  target: { entity_id: media_player.camper_stereo }
+              until:
+                - condition: template
+                  value_template: "{{ is_state('media_player.camper_stereo', 'playing') or repeat.index > 60 }}"
+          - repeat:
+              sequence:
+                - delay: 1
+                - action: homeassistant.update_entity
+                  target: { entity_id: media_player.camper_stereo }
+              until:
+                - condition: template
+                  value_template: "{{ not is_state('media_player.camper_stereo', 'playing') or repeat.index > 300 }}"
+
+read_aloud_stop:
+  alias: "Stop reading aloud"
+  icon: mdi:stop
+  sequence:
+    - action: script.turn_off
+      target: { entity_id: script.read_aloud }
+    - action: media_player.media_stop
+      target: { entity_id: media_player.camper_stereo }
+
+stereo_play_station:
+  alias: "Play music on the stereo (Spotify)"
+  icon: mdi:spotify
+  description: >-
+    Plays one of Morris's own Spotify playlists on the stereo (the Bluetooth speaker, named
+    Speaker). Spotify Premium, so no commercials - the old ad-supported radio stations are
+    gone (2026-10-25). Used by the playlist buttons on the Stereo page and by Jarvis.
+    Jarvis can pass a playlist name or a genre (rock, country, chill, sleep, sad, slow).
+  mode: restart
+  fields:
+    station:
+      description: >-
+        Playlist name or genre. Playlists (sorted by style 2026-10-25): Rock, Country, ICP (juggalo), Twiztid, Pink Floyd, Bump (hip-hop and party), Slow, Stoned, Sad, Stick Figure, Ocean (reggae and chill), Delinquent Habits, Dax, Funny, Strange Music (Tech N9ne), Lofi Chill, Rain Sleep Music.
+      example: "Rock"
+  variables:
+    playlists:
+      rock: "spotify:playlist:0n606FitCs795t0nGgc2Vw"
+      country: "spotify:playlist:6OECJTmyh5cRbgwPy0d4wD"
+      icp: "spotify:playlist:28n4UQo3pisVX4v25o9hsq"
+      twiztid: "spotify:playlist:3ZHazDaNxAALg3wOkXBWTt"
+      pink floyd: "spotify:playlist:6rbHncv2pyxmp6sDxKnsKm"
+      bump: "spotify:playlist:08aM4gWMeisw0hbXDbG2cX"
+      new bass & bump: "spotify:playlist:0gPdUu9Or9wKS3XRR72BvA"
+      slow: "spotify:playlist:3OPbX4ImltOSrTjzHjhLqE"
+      stoned: "spotify:playlist:6JMtIi6MlKUCj0gBJLgH2M"
+      sad: "spotify:playlist:0pF1hdAGwU8zJp9x0Ffx0f"
+      stick figure: "spotify:playlist:2MLWFu2EGYqHOENWCO96r2"
+      ocean: "spotify:playlist:5JeLPqP7BA4VdSZRImDUq0"
+      delinquent habits: "spotify:playlist:5w1j10wDodO3fNvu6ItAJM"
+      dax: "spotify:playlist:1Jna4Uwkj6SWd5ooK83LWE"
+      funny: "spotify:playlist:1g8Jz7sDREAfz1rX37bhHb"
+      strange music: "spotify:playlist:2UO3oAGQiEEq3Y4OL39f3k"
+      lofi chill: "spotify:playlist:3LFIBdP7eZXJKqf3guepZ1"
+      rain sleep music: "spotify:playlist:1NLkfuJWKdwsyUIVPuQibc"
+    genres:
+      classic rock: rock
+      metal: rock
+      rap: bump
+      bass: new bass & bump
+      new bass: new bass & bump
+      new bump: new bass & bump
+      new music: new bass & bump
+      hip hop: bump
+      juggalo: icp
+      chill: lofi chill
+      relax: lofi chill
+      relaxing: lofi chill
+      lofi: lofi chill
+      sleep: rain sleep music
+      rain: rain sleep music
+      reggae: stick figure
+      # the old radio station names Jarvis was taught (radio removed 2026-10-25)
+      today's country: country
+      classic country: country
+      90s country: country
+      80s hits: rock
+      oldies: rock
+      blues: slow
+    key: "{{ (station | default('') | lower | replace('’', \"'\") | trim) }}"
+    name_key: "{{ key if key in playlists else genres.get(key, '') }}"
+    uri: "{{ playlists.get(name_key, '') }}"
+    name: "{{ 'ICP' if name_key == 'icp' else ('New Bass & Bump' if name_key == 'new bass & bump' else name_key | title) }}"
+  sequence:
+    - condition: template
+      value_template: "{{ uri != '' }}"
+    - action: script.turn_off
+      target: { entity_id: script.read_aloud }
+    - if:
+        - condition: state
+          entity_id: media_player.camper_stereo
+          state: playing
+      then:
+        - action: media_player.media_stop
+          target: { entity_id: media_player.camper_stereo }
+          continue_on_error: true
+    - action: shell_command.camper_spotify
+      data:
+        cmd: "play {{ uri }} '{{ name }}'"
+    - delay: "00:00:03"
+    - action: homeassistant.update_entity
+      target: { entity_id: sensor.camper_spotify }
+
+camper_spotify_control:
+  alias: "Stereo Spotify controls"
+  icon: mdi:spotify
+  description: >-
+    Pause, resume, skip or change the volume of the Spotify music on the stereo
+    (the Bluetooth speaker, named Speaker).
+  mode: queued
+  fields:
+    cmd:
+      description: "One of: pause, resume, playpause, next, prev, stop, louder, quieter"
+      example: "pause"
+  variables:
+    vol: "{{ state_attr('sensor.camper_spotify', 'volume') | int(60) }}"
+    run: >-
+      {% if cmd == 'louder' %}volume {{ [vol + 10, 100] | min }}{% elif cmd == 'quieter' %}volume {{ [vol - 10, 10] | max }}{% else %}{{ cmd }}{% endif %}
+  sequence:
+    - condition: template
+      value_template: "{{ cmd in ['pause', 'resume', 'playpause', 'next', 'prev', 'stop', 'louder', 'quieter'] }}"
+    - action: shell_command.camper_spotify
+      data:
+        cmd: "{{ run }}"
+    - delay: "00:00:01"
+    - action: homeassistant.update_entity
+      target: { entity_id: sensor.camper_spotify }
+
+camper_tv_youtube_music:
+  alias: "TV YouTube Music"
+  icon: mdi:youtube
+  mode: restart
+  description: >-
+    Stereo page "No Commercials" buttons: turns the 50" TV on and plays a long
+    YouTube music mix (YouTube Premium, so no ads). Stops the stereo radio first
+    so both don't play at once. Works the same way as Dog TV.
+  fields:
+    name:
+      description: "Button name, shown as playing"
+      example: "Classic Rock"
+    video:
+      description: "YouTube video ID"
+      example: "rMIRECxw6qA"
+  sequence:
+    - variables:
+        tv: media_player.bedroom_50_hisense_roku_tv
+    - action: input_text.set_value
+      target: { entity_id: input_text.camper_tv_music }
+      data: { value: "{{ name }}" }
+    - if:
+        - condition: state
+          entity_id: sensor.camper_spotify
+          state: playing
+      then:
+        - action: script.camper_spotify_control
+          data: { cmd: pause }
+          continue_on_error: true
+    - if:
+        - condition: state
+          entity_id: media_player.camper_stereo
+          state: playing
+      then:
+        - action: media_player.media_stop
+          target: { entity_id: media_player.camper_stereo }
+          continue_on_error: true
+    - if:
+        - condition: template
+          value_template: "{{ states(tv) in ['off', 'standby', 'unavailable', 'unknown'] }}"
+      then:
+        - action: media_player.turn_on
+          target: { entity_id: "{{ tv }}" }
+          continue_on_error: true
+        - delay: "00:00:15"
+    - action: media_player.play_media
+      target: { entity_id: "{{ tv }}" }
+      data:
+        media_content_type: app
+        media_content_id: "837"
+        extra:
+          content_id: "{{ video }}"
+          media_type: live
+      continue_on_error: true
+
+# ==== Under-camper heater test run (2026-10-26) ====
+# Runs the heater for 20 min with the 38/45 automation paused, then hands control back.
+# If anything interrupts it, automation "Under Camper: Heater Test Safety Net" re-enables
+# the automation after 25 min or at HA start.
+under_camper_heater_test:
+  alias: 'Under Camper: Heater Test 20 Min'
+  icon: mdi:radiator
+  mode: restart
+  sequence:
+  - action: automation.turn_off
+    target:
+      entity_id: automation.under_camper_heater_on_below_38_off_at_45
+    data:
+      stop_actions: true
+  - action: switch.turn_on
+    target:
+      entity_id: switch.under_camper_heater
+  - delay: 00:20:00
+  - action: switch.turn_off
+    target:
+      entity_id: switch.under_camper_heater
+  - action: automation.turn_on
+    target:
+      entity_id: automation.under_camper_heater_on_below_38_off_at_45
+  - action: automation.trigger
+    target:
+      entity_id: automation.under_camper_heater_on_below_38_off_at_45
+    data:
+      skip_condition: false
+under_camper_heater_test_stop:
+  alias: 'Under Camper: Stop Heater Test'
+  icon: mdi:radiator-off
+  mode: single
+  sequence:
+  - action: script.turn_off
+    target:
+      entity_id: script.under_camper_heater_test
+  - action: switch.turn_off
+    target:
+      entity_id: switch.under_camper_heater
+  - action: automation.turn_on
+    target:
+      entity_id: automation.under_camper_heater_on_below_38_off_at_45
+  - action: automation.trigger
+    target:
+      entity_id: automation.under_camper_heater_on_below_38_off_at_45
+    data:
+      skip_condition: false
+# Dashboard button: starts the test, or stops it if it is already running
+under_camper_heater_test_button:
+  alias: 'Under Camper: Heater Test Button'
+  mode: single
+  sequence:
+  - if:
+    - condition: state
+      entity_id: script.under_camper_heater_test
+      state: 'on'
+    then:
+    - action: script.under_camper_heater_test_stop
+    else:
+    - action: script.turn_on
+      target:
+        entity_id: script.under_camper_heater_test
+
+safe_drive_ok:
+  alias: "Safety: I'm OK"
+  icon: mdi:check-circle
+  description: Answers the safe drive check, so Nadine isn't told.
+  mode: single
+  sequence:
+    - event: safe_drive_ok
+
+safe_drive_practice:
+  alias: "Safety: Practice Check (Morris's phone only)"
+  icon: mdi:car-clock
+  description: Practice run of the safe drive check. Goes only to Morris's phone and never tells Nadine.
+  mode: single
+  sequence:
+    - delay: "00:01:00"
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        message: TTS
+        data:
+          priority: high
+          tts_text: Practice. Are you OK? Tap the alert, then tap I'm OK.
+          media_stream: alarm_stream
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        title: "\U0001F697 Are you OK? (PRACTICE)"
+        message: Practice only. Nadine will not be told. Tap here, then tap I'm OK.
+        data:
+          priority: high
+          tag: safe_drive
+          clickAction: /lovelace-camper/safe-drive
+          actions:
+            - action: SAFE_DRIVE_OK
+              title: I'm OK
+    - wait_for_trigger:
+        - trigger: event
+          event_type: mobile_app_notification_action
+          event_data:
+            action: SAFE_DRIVE_OK
+        - trigger: event
+          event_type: safe_drive_ok
+      timeout: "00:05:00"
+      continue_on_timeout: true
+    - action: notify.mobile_app_morris_sm_s906u
+      continue_on_error: true
+      data:
+        title: "{{ '\u2705 Got it' if wait.trigger is not none else 'No answer' }}"
+        message: "{{ 'Practice worked. Nadine was not told.' if wait.trigger is not none else 'In a real check, Nadine would be told now. This was practice, so she was not.' }}"
+        data:
+          tag: safe_drive

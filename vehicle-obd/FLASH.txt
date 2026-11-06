@@ -1,0 +1,5 @@
+Sequoia OBD box - flash a classic ESP32 (WROOM-32 DevKit) plugged into this ODROID by USB:
+  python3 -m esptool --chip esp32 --port /dev/ttyUSB0 --baud 460800 write_flash -z \
+    0x1000 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin
+(port may be /dev/ttyACM0). Rebuild on the Pi: esphome add-on container,
+  cd /config/esphome/sequoia_obd_fw && PLATFORMIO_GLOBALLIB_DIR=/tmp/seq_globallib pio run

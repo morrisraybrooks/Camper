@@ -1,0 +1,8 @@
+secrets.yaml
+secrets.h
+*.bak*
+__pycache__/
+.pio/
+ha_token
+*.db
+*.log

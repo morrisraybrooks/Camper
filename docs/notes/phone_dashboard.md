@@ -1,0 +1,21 @@
+# project-camper-phone-dashboard
+
+> /lovelace-phone (now laid out for the user's 8-inch TABLET in landscape) is GENERATED from camper.yaml — re-run the generator after every camper.yaml edit
+
+Built 2026-10-18 because the badge bar filled half of Morris's phone screen (Galaxy S22, about 360 px wide).
+
+- Dashboard `lovelace-phone` ("📱 Phone", mdi:cellphone, YAML mode) is registered in configuration.yaml. File: `/homeassistant/dashboards/camper_phone.yaml`. It is **generated, never edit it by hand**.
+- Generator: `/homeassistant/dashboards/make_phone_dashboard.py`. Run it with `sudo docker exec homeassistant python3 /config/dashboards/make_phone_dashboard.py`.
+  - The home view (`/lovelace-phone/home`) is a 2-across `grid` of mushroom-template-card tiles, built from the desktop home view's badges (the Home badge is skipped). Each tile keeps the badge's icon, icon_color, label/content (jinja), and tap/hold/double-tap actions.
+  - Badge card_mod highlights are translated to tile CSS: `.badge`→`ha-card`, and `.label, .content`→the [slot] text. The tile grid sits after the desktop home's background and header cards, followed by the rest of the desktop home cards.
+  - Every other view drops its badges and `visible`, and gets `subview: true` + `back_path` (/lovelace-phone/home; the shopping item pages go back to /lovelace-phone/shopping).
+  - All `/lovelace-camper/` links are rewritten to `/lovelace-phone/` (`/camper` becomes `/home`).
+- **How to apply:** after ANY change to camper.yaml, re-run the generator so the phone pages match. YAML dashboards pick up the file change on reload; no restart is needed. A restart is only needed when adding a new dashboard to configuration.yaml.
+- Gotcha: mushroom-template-card now uses `ha-tile-icon`, which sets `--tile-icon-size` on :host. Enlarge the icon with a card_mod rule `ha-tile-icon { --tile-icon-size: 56px; --mdc-icon-size: 36px; }`, not with `--icon-size` on ha-card.
+- To preview at phone width when the Chrome window won't resize: inject a 360 px wide same-origin iframe of the page.
+
+Related: [[project_pi_haos]], [[user_low_vision]], [[project_camper_easytouch]].
+- **Home temp graph (2026-10-25):** HACS `kalkih/mini-graph-card` v0.13.0 installed at the user's explicit request (the first attempt was blocked by auto-mode until the user said "install it for me"). Resource `/hacsfiles/mini-graph-card/mini-graph-card-bundle.js` is in configuration.yaml (YAML resource mode, so a restart is needed for new resources). The Home view has a stack-in-card above SHORTCUTS: two mushroom readings (Inside = sensor.easytouch_31_7f_98_77_f8_d1_current_temperature, Outside = weather.forecast_home temperature attribute), then the mini-graph (24 h, smoothing, fill fade, cyan #29B6D6 / purple #C77DDB). Labels were shortened to Inside/Outside so nothing truncates at 360 px. If HACS was never opened, a download needs `hacs/repository/refresh` first (otherwise available_version is empty).
+
+- **2026-10-25: /lovelace-phone is now the TABLET dashboard** (the user said "the phone dashboard should be made for a 8\" tablet": landscape, tablet only). The generator makes the home view `type: sections`, max_columns 2: a full-width section with the header + a **6-across** tile grid (labels wrap; labels over 10 chars at 15px, e.g. Dehumidifier), then 2 sections with the rest of the home cards. Every masonry subview becomes `sections` with 2 columns via `two_columns()` (greedy height split; background + title + first card start the left column). Every card gets `grid_options: {columns: full}`, because sections default cards to half width. Why: at about 960 px masonry made 3 narrow columns that squeezed the thermostat panel. Preview with a 962x601 same-origin iframe. The dashboard path/title is still lovelace-phone / "📱 Phone" (renaming needs a restart). Backup `dashboards__make_phone_dashboard.py.bak-preclaude-tablet-*`.
+- **Wall tablet (2026-10-26):** the 8" tablet is HA mobile_app device "M8" (TOPSAND, notify.mobile_app_m8; command_screen_on test sent). User chose Fully Kiosk Browser with camera motion wake (PLUS license, the user buys it themselves). Start URL http://192.168.0.168:8123/lovelace-phone/home. Next: once Remote Admin is on, add the HA fully_kiosk integration (the user types the password).

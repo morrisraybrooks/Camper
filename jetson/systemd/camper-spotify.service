@@ -1,0 +1,11 @@
+[Unit]
+Description=Camper Stereo - Spotify Connect (go-librespot) on the Bluetooth speaker
+After=pipewire-pulse.service network-online.target
+
+[Service]
+ExecStart=%h/.local/opt/go-librespot/go-librespot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

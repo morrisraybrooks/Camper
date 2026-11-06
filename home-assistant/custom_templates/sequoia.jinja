@@ -1,0 +1,26 @@
+{# 2016 Sequoia gauges (2026-10-17). Torque Pro names its readings itself ("Sequoia Speed (OBD)",
+   "Sequoia Engine Coolant Temperature", ...) and usually sends km/h and °C, so these find the
+   reading by name and convert. Patterns are tried in order (separated by ";"); only readings
+   that currently have a number count, so Torque's and the OBD box's same-named sensors can coexist. #}
+{% macro seq_entity(pats) -%}
+{%- set ns = namespace(e='') -%}
+{%- for p in pats.split(';') if ns.e == '' -%}
+{%- set m = states.sensor | selectattr('entity_id', 'match', 'sensor\.sequoia_(?!gauge|last|trans_raw)') | selectattr('name', 'search', '(?i)' ~ p) | selectattr('state', 'is_number') | list -%}
+{%- if m %}{% set ns.e = m[0].entity_id %}{% endif -%}
+{%- endfor -%}
+{{ ns.e }}
+{%- endmacro %}
+
+{% macro seq_value(pats, kind='') -%}
+{%- set e = seq_entity(pats) -%}
+{%- set v = states(e) | float(0) -%}
+{%- set u = (state_attr(e, 'unit_of_measurement') or '') | lower -%}
+{%- if kind == 'speed' and u in ['km/h', 'kph', 'kmh'] -%}{{ (v * 0.621371) | round(0) }}
+{%- elif kind == 'temp' and 'c' in u and 'f' not in u -%}{{ (v * 9 / 5 + 32) | round(0) }}
+{%- elif kind == 'int' -%}{{ v | round(0) }}
+{%- else -%}{{ v | round(1) }}{%- endif -%}
+{%- endmacro %}
+
+{% macro seq_ok(pats) -%}
+{%- set e = seq_entity(pats) -%}{{ e != '' and has_value(e) }}
+{%- endmacro %}

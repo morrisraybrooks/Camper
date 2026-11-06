@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep the ECOXGEAR Bluetooth speaker connected and set as the default output
+After=wireplumber.service pipewire-pulse.service
+
+[Service]
+ExecStart=/bin/sh /home/morris/camper_voice/speaker-reconnect.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
