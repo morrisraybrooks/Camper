@@ -1,12 +1,12 @@
 #!/bin/sh
 # Keep the Jetson's speakers connected (2026-11-06).
-# Priority: Furrion DV3100 camper stereo, then the W-KING D8 indoor speaker.
+# Speaker: the Furrion DV3100 camper stereo. (The W-KING D8 fallback was removed
+# 2026-11-06 at the user's request; to add a speaker back, append its MAC to SPEAKERS.)
 # The ECOXGEAR is the user's outdoor speaker and is deliberately not used here.
 # Every 30 s: power the radio on, connect any speaker that is missing, pick the
 # first one in SPEAKERS whose sink exists, make it the default and move all
-# playing audio (VLC music, voice replies) onto it. Both stay connected so the
-# W-KING doesn't go to sleep while the stereo is in use.
-SPEAKERS="00:13:04:02:45:EE F4:4E:FD:8C:1D:6F"
+# playing audio (VLC music, voice replies) onto it.
+SPEAKERS="00:13:04:02:45:EE"
 sink_of() { echo "bluez_output.$(echo "$1" | tr : _).a2dp-sink"; }
 while true; do
   if ! bluetoothctl show </dev/null 2>/dev/null | grep -q "Powered: yes"; then
