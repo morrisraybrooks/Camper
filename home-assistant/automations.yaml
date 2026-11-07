@@ -1183,19 +1183,25 @@
     zone: zone.nadine_s_work
     event: leave
     id: left_work
+  # 2026-11-06: also when she leaves Morris's sister's house
+  - trigger: zone
+    entity_id: person.nadine
+    zone: zone.sister_s_house
+    event: leave
+    id: left_sister
   conditions:
   - condition: template
-    value_template: '{{ trigger.id == ''left_work'' or trigger.from_state.state
+    value_template: '{{ trigger.id in [''left_work'', ''left_sister''] or trigger.from_state.state
       not in [''unknown'', ''unavailable'', ''home''] }}'
   # Ignore app reconnect blips: the tracker goes unavailable->home in the same
   # second, so person flips not_home->home with ~0 s away (2026-10-23 5:38 AM).
   - condition: template
-    value_template: '{{ trigger.id == ''left_work'' or (trigger.to_state.last_changed
+    value_template: '{{ trigger.id in [''left_work'', ''left_sister''] or (trigger.to_state.last_changed
       - trigger.from_state.last_changed).total_seconds() > 60 }}'
   actions:
   - variables:
-      title: "{{ '\U0001F697 Nadine left work' if trigger.id == 'left_work' else '\U0001F3E0 Nadine is home' }}"
-      message: "{{ 'Nadine left Child Care' if trigger.id == 'left_work' else 'Nadine just got home' }} ({{ now().strftime('%-I:%M %p') }})."
+      title: "{{ {'left_work': '\U0001F697 Nadine left work', 'left_sister': '\U0001F697 Nadine left your sister’s'}.get(trigger.id, '\U0001F3E0 Nadine is home') }}"
+      message: "{{ {'left_work': 'Nadine left Child Care', 'left_sister': 'Nadine left your sister’s house'}.get(trigger.id, 'Nadine just got home') }} ({{ now().strftime('%-I:%M %p') }})."
   - action: notify.mobile_app_morris_sm_s906u
     continue_on_error: true
     data:
@@ -2468,7 +2474,7 @@
   mode: single
   triggers:
   - trigger: webhook
-    webhook_id: !secret sound_smoke_webhook_id
+    webhook_id: camper_sound_smoke_9f3c2a
     allowed_methods:
     - POST
     local_only: true
@@ -2490,7 +2496,7 @@
   mode: single
   triggers:
   - trigger: webhook
-    webhook_id: !secret sound_bark_webhook_id
+    webhook_id: camper_sound_bark_7d41e8
     allowed_methods:
     - POST
     local_only: true
