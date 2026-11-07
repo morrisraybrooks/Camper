@@ -659,9 +659,32 @@ stereo_play_station:
         - action: media_player.media_stop
           target: { entity_id: media_player.camper_stereo }
           continue_on_error: true
+    # 2026-11-06: start the app on the ODROID (and remember the name), then start the
+    # playlist through the Spotify Web API integration. The app's own OpenUri command was
+    # ignored most of the time, so playlist changes didn't happen.
     - action: shell_command.camper_spotify
       data:
-        cmd: "play {{ uri }} '{{ name }}'"
+        cmd: "prepare {{ uri }} '{{ name }}'"
+    - action: homeassistant.update_entity
+      target: { entity_id: media_player.spotify_morrisraybrooks }
+    - wait_template: "{{ 'morris-ODROID-H3' in (state_attr('media_player.spotify_morrisraybrooks', 'source_list') or []) }}"
+      timeout: "00:00:30"
+    - if:
+        - condition: template
+          value_template: "{{ state_attr('media_player.spotify_morrisraybrooks', 'source') != 'morris-ODROID-H3' }}"
+      then:
+        - action: media_player.select_source
+          target: { entity_id: media_player.spotify_morrisraybrooks }
+          data: { source: morris-ODROID-H3 }
+    - action: media_player.play_media
+      target: { entity_id: media_player.spotify_morrisraybrooks }
+      data:
+        media_content_id: "{{ uri }}"
+        media_content_type: playlist
+    - action: media_player.shuffle_set
+      target: { entity_id: media_player.spotify_morrisraybrooks }
+      data: { shuffle: true }
+      continue_on_error: true
     - delay: "00:00:03"
     - action: homeassistant.update_entity
       target: { entity_id: sensor.camper_spotify }

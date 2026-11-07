@@ -1,0 +1,63 @@
+#!/bin/bash
+# Home Assistant's remote for the official Spotify app on this ODROID (2026-10-25).
+# HA runs it over SSH (key home-assistant@camper-pi). Sound goes to the camper speaker
+# via camper-stereo-link.service.
+#   camper-spotify play <spotify:playlist:...> [name]   start a playlist (shuffled)
+#   camper-spotify prepare <uri> [name]                 start the app + remember the playlist (HA plays it via Web API)
+#   camper-spotify pause|resume|playpause|next|prev|stop
+#   camper-spotify volume <0-100>                       camper speaker volume
+#   camper-spotify status                               JSON for HA
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+STATE=$HOME/.local/state/camper-spotify.json
+P="playerctl -p spotify"
+
+ensure_spotify() {
+  $P status >/dev/null 2>&1 && return
+  WAYLAND_DISPLAY=wayland-0 DISPLAY=:0 setsid spotify >/dev/null 2>&1 </dev/null &
+  for _ in $(seq 30); do sleep 1; $P status >/dev/null 2>&1 && { sleep 2; return; }; done
+}
+
+case "$1" in
+  play)
+    ensure_spotify
+    dbus-send --dest=org.mpris.MediaPlayer2.spotify /org/mpris/MediaPlayer2 \
+      org.mpris.MediaPlayer2.Player.OpenUri "string:$2"
+    sleep 2; $P shuffle On 2>/dev/null; $P play
+    python3 -c 'import json,sys; json.dump({"uri": sys.argv[1], "name": sys.argv[2]}, open(sys.argv[3], "w"))' "$2" "${3:-}" "$STATE"
+    ;;
+  prepare)
+    # 2026-11-06: HA now starts playlists through the Spotify Web API integration
+    # (media_player.spotify_morrisraybrooks), because the app ignores OpenUri. This just
+    # makes sure the app is running (so it shows up as a Spotify device) and remembers
+    # the playlist name for the dashboard.
+    ensure_spotify
+    python3 -c 'import json,sys; json.dump({"uri": sys.argv[1], "name": sys.argv[2]}, open(sys.argv[3], "w"))' "$2" "${3:-}" "$STATE"
+    ;;
+  pause) $P pause ;;
+  resume) ensure_spotify; $P play ;;
+  playpause) ensure_spotify; $P play-pause ;;
+  next) $P next ;;
+  prev) $P previous ;;
+  stop) $P pause; rm -f "$STATE" ;;
+  volume) pactl set-sink-volume camper_stereo "${2}%" ;;
+  status)
+    python3 - "$STATE" <<'PY'
+import json, subprocess, sys
+def run(*a):
+    r = subprocess.run(a, capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+st = run("playerctl", "-p", "spotify", "status") or "Off"
+meta = run("playerctl", "-p", "spotify", "metadata", "--format", "{{title}}\t{{artist}}\t{{mpris:artUrl}}").split("\t") + ["", "", ""]
+vol = ""
+for line in run("pactl", "get-sink-volume", "camper_stereo").split("/"):
+    if "%" in line: vol = line.strip().rstrip("%"); break
+try: now = json.load(open(sys.argv[1]))
+except Exception: now = {}
+print(json.dumps({"state": st.lower(), "title": meta[0], "artist": meta[1], "art": meta[2],
+                  "volume": int(vol) if vol.isdigit() else None,
+                  "playlist_uri": now.get("uri", ""), "playlist": now.get("name", "")}))
+PY
+    ;;
+  *) echo "usage: camper-spotify play URI [name]|prepare URI [name]|pause|resume|playpause|next|prev|stop|volume N|status" >&2; exit 2 ;;
+esac
