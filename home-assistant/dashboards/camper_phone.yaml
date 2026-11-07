@@ -4662,6 +4662,25 @@ views:
           ha-card [slot=secondary] { color: #6B6558 !important; }
       grid_options:
         columns: full
+    - type: media-control
+      entity: media_player.spotify_morrisraybrooks
+      name: Spotify
+      card_mod:
+        style: |
+          ha-card {
+            border-radius: 26px !important;
+            border: 1px solid rgba(255, 150, 50, 0.5) !important;
+            box-shadow: 0 0 24px rgba(255, 130, 30, 0.3), 0 8px 24px rgba(0,0,0,0.5) !important;
+            overflow: hidden !important;
+            opacity: 1 !important;
+          }
+          .title, .media-title { font-size: 22px !important; font-weight: 700 !important; }
+          .artist, .media-artist { font-size: 17px !important; }
+          ha-icon-button { --mdc-icon-button-size: 64px !important; --mdc-icon-size: 40px !important; }
+      grid_options:
+        columns: full
+  - type: grid
+    cards:
     - type: custom:stack-in-card
       card_mod:
         style: |

@@ -4077,7 +4077,23 @@ views:
             }
             ha-card [slot=primary] { color: #2B2A28 !important; font-weight: 700 !important; font-size: 22px !important; }
             ha-card [slot=secondary] { color: #6B6558 !important; }
-      # ---- Stereo: Bluetooth speaker on the Pi (ECOXGEAR-BP, or the Furrion DV3100), via the VLC add-on ----
+      # Spotify player (2026-11-06): HA's Spotify integration, big cover + progress + controls
+      - type: media-control
+        entity: media_player.spotify_morrisraybrooks
+        name: Spotify
+        card_mod:
+          style: |
+            ha-card {
+              border-radius: 26px !important;
+              border: 1px solid rgba(255, 150, 50, 0.5) !important;
+              box-shadow: 0 0 24px rgba(255, 130, 30, 0.3), 0 8px 24px rgba(0,0,0,0.5) !important;
+              overflow: hidden !important;
+              opacity: 1 !important;
+            }
+            .title, .media-title { font-size: 22px !important; font-weight: 700 !important; }
+            .artist, .media-artist { font-size: 17px !important; }
+            ha-icon-button { --mdc-icon-button-size: 64px !important; --mdc-icon-size: 40px !important; }
+      # ---- Stereo: the Furrion DV3100 camper stereo, on the Jetson's Bluetooth ----
       - type: custom:stack-in-card
         card_mod:
           style: |
