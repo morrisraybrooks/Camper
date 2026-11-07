@@ -4789,6 +4789,72 @@ views:
             - font-size: 20px
             - font-weight: 700
             - color: '#2B2A28'
+      - type: horizontal-stack
+        cards:
+        - type: custom:button-card
+          icon: mdi:volume-minus
+          name: Quieter
+          tap_action:
+            action: perform-action
+            perform_action: script.camper_spotify_control
+            data:
+              cmd: quieter
+          styles:
+            card:
+            - height: 100px
+            - border-radius: 22px
+            - background: rgba(255,255,255,0.85)
+            - border: 2px solid rgba(255,150,50,0.6)
+            icon:
+            - width: 56px
+            - color: '#2B2A28'
+            name:
+            - font-size: 20px
+            - font-weight: 700
+            - color: '#2B2A28'
+        - type: custom:button-card
+          icon: mdi:playlist-music
+          name: Songs
+          tap_action:
+            action: navigate
+            navigation_path: |-
+              [[[ const u = states['sensor.camper_spotify']?.attributes?.playlist_uri;
+                  const base = '/media-browser/media_player.spotify_morrisraybrooks/spotify%3A%2F%2Fcurrent_user_playlists%2Ccurrent_user_playlists';
+                  return u ? base + '/spotify%3A%2F%2Fplaylist%2C' + encodeURIComponent(u) : base; ]]]
+          styles:
+            card:
+            - height: 100px
+            - border-radius: 22px
+            - background: '#1DB954'
+            - border: '2px solid #158a3e'
+            icon:
+            - width: 56px
+            - color: white
+            name:
+            - font-size: 20px
+            - font-weight: 800
+            - color: white
+        - type: custom:button-card
+          icon: mdi:volume-plus
+          name: Louder
+          tap_action:
+            action: perform-action
+            perform_action: script.camper_spotify_control
+            data:
+              cmd: louder
+          styles:
+            card:
+            - height: 100px
+            - border-radius: 22px
+            - background: rgba(255,255,255,0.85)
+            - border: 2px solid rgba(255,150,50,0.6)
+            icon:
+            - width: 56px
+            - color: '#2B2A28'
+            name:
+            - font-size: 20px
+            - font-weight: 700
+            - color: '#2B2A28'
       grid_options:
         columns: full
   - type: grid
@@ -4822,80 +4888,6 @@ views:
             }
             ha-card .subtitle { color: #6B6558 !important; font-size: 12px !important; }
             ha-card { padding: 0 0 4px 0 !important; }
-      - type: horizontal-stack
-        cards:
-        - type: custom:mushroom-template-card
-          primary: Back
-          icon: mdi:skip-previous
-          icon_color: grey
-          layout: vertical
-          tap_action:
-            action: perform-action
-            perform_action: script.camper_spotify_control
-            data:
-              cmd: prev
-          card_mod:
-            style: |
-              ha-card { background: #FFFFFF !important; border-radius: 16px !important; border: 1px solid #E3D9C7 !important; }
-              ha-card [slot=primary] { font-size: 15px !important; font-weight: 700 !important; color: #2B2A28 !important; }
-        - type: custom:mushroom-template-card
-          primary: Play / Pause
-          icon: mdi:play-pause
-          icon_color: green
-          layout: vertical
-          tap_action:
-            action: perform-action
-            perform_action: script.camper_spotify_control
-            data:
-              cmd: playpause
-          card_mod:
-            style: |
-              ha-card { background: #FFFFFF !important; border-radius: 16px !important; border: 1px solid #E3D9C7 !important; }
-              ha-card [slot=primary] { font-size: 15px !important; font-weight: 700 !important; color: #2B2A28 !important; }
-        - type: custom:mushroom-template-card
-          primary: Next
-          icon: mdi:skip-next
-          icon_color: grey
-          layout: vertical
-          tap_action:
-            action: perform-action
-            perform_action: script.camper_spotify_control
-            data:
-              cmd: next
-          card_mod:
-            style: |
-              ha-card { background: #FFFFFF !important; border-radius: 16px !important; border: 1px solid #E3D9C7 !important; }
-              ha-card [slot=primary] { font-size: 15px !important; font-weight: 700 !important; color: #2B2A28 !important; }
-      - type: horizontal-stack
-        cards:
-        - type: custom:mushroom-template-card
-          primary: Quieter
-          icon: mdi:volume-minus
-          icon_color: blue
-          layout: vertical
-          tap_action:
-            action: perform-action
-            perform_action: script.camper_spotify_control
-            data:
-              cmd: quieter
-          card_mod:
-            style: |
-              ha-card { background: #FFFFFF !important; border-radius: 16px !important; border: 1px solid #E3D9C7 !important; }
-              ha-card [slot=primary] { font-size: 15px !important; font-weight: 700 !important; color: #2B2A28 !important; }
-        - type: custom:mushroom-template-card
-          primary: Louder
-          icon: mdi:volume-plus
-          icon_color: blue
-          layout: vertical
-          tap_action:
-            action: perform-action
-            perform_action: script.camper_spotify_control
-            data:
-              cmd: louder
-          card_mod:
-            style: |
-              ha-card { background: #FFFFFF !important; border-radius: 16px !important; border: 1px solid #E3D9C7 !important; }
-              ha-card [slot=primary] { font-size: 15px !important; font-weight: 700 !important; color: #2B2A28 !important; }
       - type: custom:mushroom-title-card
         title: My Playlists
         card_mod:
