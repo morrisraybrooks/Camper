@@ -1,0 +1,11 @@
+[Unit]
+Description=Spotify on this ODROID -> Jetson Bluetooth speaker (SSH audio link)
+After=pipewire-pulse.service
+
+[Service]
+ExecStart=%h/.local/bin/camper-stereo-link.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

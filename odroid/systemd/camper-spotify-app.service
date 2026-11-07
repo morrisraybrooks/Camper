@@ -1,0 +1,9 @@
+[Unit]
+Description=Spotify app for the camper stereo (started by camper-spotify / Home Assistant)
+# Runs as a user service so it survives the SSH session that starts it (2026-11-06:
+# launching it from Home Assistant's SSH command died with the session).
+
+[Service]
+Environment=WAYLAND_DISPLAY=wayland-0 DISPLAY=:0
+ExecStart=/usr/bin/spotify
+Restart=no
