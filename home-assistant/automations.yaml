@@ -1189,19 +1189,24 @@
     zone: zone.sister_s_house
     event: leave
     id: left_sister
+  - trigger: zone
+    entity_id: person.nadine
+    zone: zone.laundromat
+    event: leave
+    id: left_laundromat
   conditions:
   - condition: template
-    value_template: '{{ trigger.id in [''left_work'', ''left_sister''] or trigger.from_state.state
+    value_template: '{{ trigger.id in [''left_work'', ''left_sister'', ''left_laundromat''] or trigger.from_state.state
       not in [''unknown'', ''unavailable'', ''home''] }}'
   # Ignore app reconnect blips: the tracker goes unavailable->home in the same
   # second, so person flips not_home->home with ~0 s away (2026-10-23 5:38 AM).
   - condition: template
-    value_template: '{{ trigger.id in [''left_work'', ''left_sister''] or (trigger.to_state.last_changed
+    value_template: '{{ trigger.id in [''left_work'', ''left_sister'', ''left_laundromat''] or (trigger.to_state.last_changed
       - trigger.from_state.last_changed).total_seconds() > 60 }}'
   actions:
   - variables:
-      title: "{{ {'left_work': '\U0001F697 Nadine left work', 'left_sister': '\U0001F697 Nadine left your sister’s'}.get(trigger.id, '\U0001F3E0 Nadine is home') }}"
-      message: "{{ {'left_work': 'Nadine left Child Care', 'left_sister': 'Nadine left your sister’s house'}.get(trigger.id, 'Nadine just got home') }} ({{ now().strftime('%-I:%M %p') }})."
+      title: "{{ {'left_work': '\U0001F697 Nadine left work', 'left_sister': '\U0001F697 Nadine left your sister’s', 'left_laundromat': '\U0001F9FA Nadine left the laundromat'}.get(trigger.id, '\U0001F3E0 Nadine is home') }}"
+      message: "{{ {'left_work': 'Nadine left Child Care', 'left_sister': 'Nadine left your sister’s house', 'left_laundromat': 'Nadine left the laundromat'}.get(trigger.id, 'Nadine just got home') }} ({{ now().strftime('%-I:%M %p') }})."
   - action: notify.mobile_app_morris_sm_s906u
     continue_on_error: true
     data:
