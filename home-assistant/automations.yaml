@@ -2542,3 +2542,35 @@
       entity_id: automation.under_camper_heater_on_below_38_off_at_45
     data:
       skip_condition: false
+- id: wking_speaker_daily_charge
+  alias: "W-KING Speaker: Charge 1-3 PM"
+  description: >-
+    The W-KING D8 backup speaker doesn't report its battery, so it charges on a
+    timer through the spare Kasa plug: on at 1 PM, off at 3 PM. If the plug is
+    offline at 1 PM, send one phone notice.
+  mode: single
+  triggers:
+    - trigger: time
+      at: "13:00:00"
+      id: "on"
+    - trigger: time
+      at: "15:00:00"
+      id: "off"
+  actions:
+    - if:
+        - condition: state
+          entity_id: switch.kasa_hs105_spare
+          state: unavailable
+      then:
+        - if:
+            - condition: trigger
+              id: "on"
+          then:
+            - action: notify.mobile_app_morris_sm_s906u
+              data:
+                title: "W-KING speaker not charging"
+                message: "The speaker's charging plug is offline, so the W-KING didn't charge today."
+      else:
+        - action: "switch.turn_{{ trigger.id }}"
+          target:
+            entity_id: switch.kasa_hs105_spare

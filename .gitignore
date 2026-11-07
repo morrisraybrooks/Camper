@@ -6,3 +6,4 @@ __pycache__/
 ha_token
 *.db
 *.log
+.superpowers/
