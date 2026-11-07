@@ -1203,6 +1203,13 @@
   - condition: template
     value_template: '{{ trigger.id in [''left_work'', ''left_sister'', ''left_laundromat''] or (trigger.to_state.last_changed
       - trigger.from_state.last_changed).total_seconds() > 60 }}'
+  # 2026-11-06: the sister's-house and laundromat alerts only fire when Morris is
+  # NOT with her (his phone in the same zone, or within a quarter mile of hers).
+  - condition: template
+    value_template: >-
+      {{ trigger.id not in ['left_sister', 'left_laundromat']
+         or not (states('person.morris') == trigger.from_state.state
+                 or (distance('device_tracker.sm_s906u', 'device_tracker.home') or 99) < 0.25) }}
   actions:
   - variables:
       title: "{{ {'left_work': '\U0001F697 Nadine left work', 'left_sister': '\U0001F697 Nadine left your sister’s', 'left_laundromat': '\U0001F9FA Nadine left the laundromat'}.get(trigger.id, '\U0001F3E0 Nadine is home') }}"
