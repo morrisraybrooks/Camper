@@ -6,7 +6,7 @@
 # Every 30 s: power the radio on, connect any speaker that is missing, pick the
 # first one in SPEAKERS whose sink exists, make it the default and move all
 # playing audio (VLC music, voice replies) onto it.
-SPEAKERS="00:13:04:02:45:EE"
+SPEAKERS="F4:4E:FD:8C:1D:6F"  # W-KING D8 (2026-11-12 test, Furrion was 00:13:04:02:45:EE)
 sink_of() { echo "bluez_output.$(echo "$1" | tr : _).a2dp-sink"; }
 while true; do
   if ! bluetoothctl show </dev/null 2>/dev/null | grep -q "Powered: yes"; then

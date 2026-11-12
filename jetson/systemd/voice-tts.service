@@ -1,0 +1,13 @@
+[Unit]
+Description=Camper voice: TTS front door :10200 (Kokoro Heart on GPU + pass-through to Piper :10202)
+After=voice-piper.service
+Wants=voice-piper.service
+
+[Service]
+WorkingDirectory=/home/morris/camper_voice
+ExecStart=/home/morris/camper_voice/venv-kokoro/bin/python tts_proxy.py --uri tcp://0.0.0.0:10200 --piper-port 10202
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

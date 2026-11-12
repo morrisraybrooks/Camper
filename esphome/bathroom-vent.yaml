@@ -1,0 +1,283 @@
+# Bathroom roof vent opener (2018 Grey Wolf). PROPOSAL, NOT BUILT OR COMPILED.
+# ESP32 + TMC2209 + dual-shaft NEMA 17 on the vent's wing-nut crank shaft.
+# The hand crank goes on the motor's other shaft. The vent's own lid switch
+# still turns the fan on when the lid opens, so opening the lid = fan on.
+#
+# Changes from the first draft:
+#  - ESPHome has no built-in "tmc2209:" block, and the a4988 stepper has no
+#    enable_pin or sleep_when_done. This uses slimcdk's TMC2209 component.
+#    Freewheel at standstill (ihold 0) does the "let go so I can hand-crank".
+#  - Pins moved off GPIO12 (strapping pin: STEP high at boot can stop the
+#    ESP32 booting) and GPIO15.
+#  - A stall only counts as "closed" while CLOSING. Stalling while opening,
+#    or partway (ice, jam) stops the motor and reports a fault.
+#  - No -50000 step move. Closing goes at most full travel + 15%, and every
+#    move has a time limit.
+#  - A reed switch on the lid is the main "closed" sensor. StallGuard on a
+#    worm-gear crank is iffy (the gasket squashes slowly, so the load builds
+#    gradually), so it's only the backup.
+#  - The cover reports its position to Home Assistant and has Stop.
+#  - Cranking by hand is detected by the reed switch and resets the position.
+#
+# WIRING (TMC2209 module -> ESP32)
+#   STEP -> GPIO25      DIR -> GPIO26      EN -> GPIO27 (low = on)
+#   DIAG -> GPIO34 (input only, fine for DIAG)
+#   PDN_UART -> GPIO16 (RX) directly, and GPIO17 (TX) through a 1k resistor
+#   MS1, MS2 -> GND (UART address 0)
+#   VIO -> 3.3 V, GND -> GND (common with the ESP32)
+#   VM -> 12 V through a 3 A fuse, 100 uF cap across VM/GND at the module
+#   12 V -> buck converter -> 5 V into the ESP32 VIN
+#   Reed switch (lid closed) -> GPIO32 and GND, magnet on the lid
+#   Never unplug the motor while VM is powered: it kills the TMC2209.
+#   Crank by hand slowly: a spinning stepper makes voltage that goes back
+#   into the driver.
+
+substitutions:
+  device_name: bathroom-vent
+  friendly_name: "Bathroom Vent"
+  # Steps from closed to fully open. MEASURE IT: count wing-nut turns from
+  # closed to fully open, x 200 full steps x 4 microsteps.
+  # Example: 15 turns x 800 = 12000.
+  open_steps: "12000"
+  # Longest a single move may take before it's stopped and reported.
+  max_move_s: "90"
+
+external_components:
+  - source: github://slimcdk/esphome-custom-components
+    components: [ stepper, tmc2209_hub, tmc2209 ]
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: -100
+    then:
+      - tmc2209.configure:
+          microsteps: 4          # the component works best below 8 in step/dir mode
+          interpolation: true
+          enable_spreadcycle: false  # StallGuard only works in StealthChop
+          tcool_threshold: 1048575   # max: StallGuard active at every speed
+          tpwm_threshold: 0
+      - tmc2209.stallguard:
+          threshold: 50          # TUNE with the "Vent Motor Load" sensor
+      - tmc2209.currents:
+          standstill_mode: freewheeling  # no holding torque: hand crank works
+          run_current: 600mA     # TUNE: start low to protect the plastic gears
+          hold_current: 0mA
+      # Position is unknown after a reboot unless the lid reads closed.
+      - lambda: |-
+          if (id(lid_closed).state) {
+            id(vent_motor).report_position(0);
+            id(homed) = true;
+          }
+      - component.update: vent_cover
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret bathroom_vent_api_key
+
+ota:
+  platform: esphome
+  password: !secret bathroom_vent_ota_password
+
+logger:
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 115200
+
+tmc2209_hub:
+  id: hub1
+  uart_id: uart_bus
+
+globals:
+  - id: homed            # true once the lid has been seen closed
+    type: bool
+    initial_value: "false"
+  - id: closing
+    type: bool
+    initial_value: "false"
+  - id: fault
+    type: std::string
+    initial_value: '""'
+
+stepper:
+  - platform: tmc2209
+    id: vent_motor
+    tmc2209_hub_id: hub1
+    address: 0x00
+    rsense: 110 mOhm       # check your module (BTT/FYSETC boards are 110)
+    step_pin: GPIO25
+    dir_pin: GPIO26
+    enn_pin: GPIO27
+    diag_pin: GPIO34
+    max_speed: 800 steps/s   # = 1 crank turn per second at 4 microsteps
+    acceleration: 400 steps/s^2
+    deceleration: 400 steps/s^2
+    on_stall:
+      - stepper.stop: vent_motor
+      - lambda: |-
+          if (id(closing)) {
+            // Hit the roof while closing. That's closed.
+            id(vent_motor).report_position(0);
+            id(vent_motor).set_target(0);
+            id(homed) = true;
+            if (!id(lid_closed).state)
+              id(fault) = "Stalled closing, but the lid switch doesn't read closed";
+          } else {
+            id(fault) = "Stalled while opening (ice? jammed?)";
+          }
+          id(closing) = false;
+      - script.stop: move_timer
+      - component.update: vent_cover
+
+binary_sensor:
+  - platform: gpio
+    id: lid_closed
+    name: "Vent Lid Closed"
+    pin:
+      number: GPIO32
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on_off: 50ms
+    on_press:
+      # Lid reached closed: under motor power or by hand. Zero the position.
+      - stepper.stop: vent_motor
+      - lambda: |-
+          id(vent_motor).report_position(0);
+          id(vent_motor).set_target(0);
+          id(homed) = true;
+          id(closing) = false;
+          id(fault) = "";
+      - script.stop: move_timer
+      - component.update: vent_cover
+    on_release:
+      # Lid left closed while the motor was idle = someone cranked it by
+      # hand. The position is unknown until it's closed again.
+      - if:
+          condition:
+            lambda: return id(vent_motor).has_reached_target();
+          then:
+            - lambda: id(homed) = false;
+            - component.update: vent_cover
+
+sensor:
+  # Watch this while it runs to tune the stall threshold: note the normal
+  # reading and the reading when the lid hits the roof.
+  - platform: tmc2209
+    type: stallguard_result
+    tmc2209_id: vent_motor
+    name: "Vent Motor Load"
+    update_interval: 250ms
+
+text_sensor:
+  - platform: template
+    name: "Vent Status"
+    update_interval: 2s
+    lambda: |-
+      if (!id(fault).empty()) return id(fault);
+      if (!id(vent_motor).has_reached_target())
+        return std::string(id(closing) ? "Closing" : "Opening");
+      if (id(lid_closed).state) return std::string("Closed");
+      if (!id(homed)) return std::string("Opened by hand (position unknown)");
+      return std::string("Open");
+
+script:
+  # Every move gets a time limit.
+  - id: move_timer
+    mode: restart
+    then:
+      - delay: ${max_move_s}s
+      - if:
+          condition:
+            lambda: return !id(vent_motor).has_reached_target();
+          then:
+            - stepper.stop: vent_motor
+            - lambda: |-
+                id(fault) = "Took too long, stopped";
+                id(homed) = false;
+                id(closing) = false;
+            - component.update: vent_cover
+
+  - id: close_vent
+    then:
+      - lambda: |-
+          id(fault) = "";
+          if (id(lid_closed).state) return;
+          id(closing) = true;
+          int32_t now = id(vent_motor).current_position;
+          // Known position: go to 0 and a little past to find the roof.
+          // Unknown: at most full travel + 15%, never an endless move.
+          int32_t extra = (int32_t) (${open_steps} * 0.15);
+          int32_t target = id(homed) ? -extra : now - (int32_t) (${open_steps} * 1.15);
+          id(vent_motor).set_target(target);
+      - script.execute: move_timer
+
+  - id: open_to
+    parameters:
+      pos: float   # 0.0 to 1.0
+    then:
+      # Position unknown (hand-cranked) -> close first so it knows where it is.
+      - if:
+          condition:
+            lambda: return !id(homed);
+          then:
+            - script.execute: close_vent
+            - wait_until:
+                condition:
+                  lambda: return id(vent_motor).has_reached_target();
+                timeout: ${max_move_s}s
+      - lambda: |-
+          if (!id(homed)) { id(fault) = "Couldn't find closed, not opening"; return; }
+          id(fault) = "";
+          id(closing) = false;
+          id(vent_motor).set_target((int32_t) (pos * ${open_steps}));
+      - script.execute: move_timer
+
+cover:
+  - platform: template
+    id: vent_cover
+    name: "Bathroom Vent"
+    device_class: damper
+    has_position: true
+    lambda: |-
+      if (id(lid_closed).state) return COVER_CLOSED;
+      if (!id(homed)) return {};   // unknown
+      float p = (float) id(vent_motor).current_position / ${open_steps};
+      return std::max(0.0f, std::min(1.0f, p));
+    open_action:
+      - script.execute:
+          id: open_to
+          pos: 1.0
+    close_action:
+      - script.execute: close_vent
+    stop_action:
+      - stepper.stop: vent_motor
+      - script.stop: move_timer
+      - lambda: id(closing) = false;
+    position_action:
+      - if:
+          condition:
+            lambda: return pos <= 0.01;
+          then:
+            - script.execute: close_vent
+          else:
+            - script.execute:
+                id: open_to
+                pos: !lambda return pos;

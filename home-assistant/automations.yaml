@@ -2317,6 +2317,11 @@
       - condition: state
         entity_id: switch.under_camper_heater
         state: 'on'
+      - condition: not
+        conditions:
+        - condition: state
+          entity_id: timer.underbelly_heater_manual
+          state: active
       sequence:
       - action: switch.turn_off
         target:
@@ -2560,3 +2565,177 @@
       entity_id: automation.under_camper_heater_on_below_38_off_at_45
     data:
       skip_condition: false
+- id: camper_dehumidifier_boost
+  alias: 'Camper: Dehumidifier Boost When Really Humid'
+  description: Above 58% inside for 10 min -> Max + High fan. Below 50% for 15 min -> back to what it was.
+  mode: queued
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.lumi_lumi_weather_humidity
+    above: 58
+    for: 00:10:00
+    id: humid
+  - trigger: numeric_state
+    entity_id: sensor.lumi_lumi_weather_humidity
+    below: 50
+    for: 00:15:00
+    id: dry
+  - trigger: homeassistant
+    event: start
+    id: start
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: humid
+      sequence:
+      - action: script.dehumidifier_boost_on
+    - conditions:
+      - condition: or
+        conditions:
+        - condition: trigger
+          id: dry
+        - condition: template
+          value_template: "{{ trigger.id == 'start' and states('sensor.lumi_lumi_weather_humidity') | float(100) < 50 }}"
+      sequence:
+      - action: script.dehumidifier_boost_off
+- id: voice_daisy_whistle
+  alias: 'Voice: Whistle for Daisy'
+  description: '"Hey Jarvis, whistle for Daisy" plays Daisy''s come-here whistle on the stereo. Added 2026-11-07.'
+  mode: single
+  triggers:
+  - trigger: conversation
+    command:
+    - '[please] whistle [for] daisy'
+    - '[please] call daisy [home|in|back]'
+    - 'daisy come (here|home|back|inside)'
+    - '[please] blow [the] (dog|daisy''s) whistle'
+    - '[play] [the] dog whistle'
+  actions:
+  - set_conversation_response: Whistling for Daisy.
+  - action: script.turn_on
+    target:
+      entity_id: script.daisy_whistle
+- id: underbelly_heater_timer_done
+  alias: 'Under Camper: Heater Run Timer Finished'
+  description: The Run-for button's time is up. Turn the heater off unless it's freezing-cold under there.
+  mode: single
+  triggers:
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: timer.underbelly_heater_manual
+  conditions:
+  - condition: not
+    conditions:
+    - condition: numeric_state
+      entity_id: sensor.under_camper_temperature
+      below: 38
+  actions:
+  - action: switch.turn_off
+    target:
+      entity_id: switch.under_camper_heater
+- id: underbelly_heater_manual_on
+  alias: 'Under Camper: Heater Turned On By Hand Runs 1 Hour'
+  description: Tapping the plain on/off toggle when it's warm runs the heater for 1 hour instead of the 15-minute check turning it right back off.
+  mode: single
+  triggers:
+  - trigger: state
+    entity_id: switch.under_camper_heater
+    from: 'off'
+    to: 'on'
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.context.user_id is not none }}"
+  - condition: state
+    entity_id: timer.underbelly_heater_manual
+    state: idle
+  - condition: not
+    conditions:
+    - condition: numeric_state
+      entity_id: sensor.under_camper_temperature
+      below: 38
+  actions:
+  - action: timer.start
+    target:
+      entity_id: timer.underbelly_heater_manual
+    data:
+      duration: '01:00:00'
+- id: underbelly_heater_manual_off
+  alias: 'Under Camper: Heater Off Cancels Run Timer'
+  mode: single
+  triggers:
+  - trigger: state
+    entity_id: switch.under_camper_heater
+    to: 'off'
+  conditions:
+  - condition: state
+    entity_id: timer.underbelly_heater_manual
+    state: active
+  actions:
+  - action: timer.cancel
+    target:
+      entity_id: timer.underbelly_heater_manual
+
+- id: porch_led_morris_home_from_work
+  alias: "Porch LED Strip: Morris Home From Work (20 min)"
+  description: >-
+    When Morris's phone GPS pulls into the Home zone after work (midnight to 9 AM, dark out),
+    light the awning LED strip bright white for 20 minutes, then turn it back off
+    (only if it was off before).
+  mode: single
+  max_exceeded: silent
+  triggers:
+  - trigger: zone
+    entity_id: device_tracker.sm_s906u
+    zone: zone.home
+    event: enter
+  conditions:
+  # ignore phone-app reconnect blips (unavailable -> home)
+  - condition: template
+    value_template: "{{ trigger.from_state.state not in ['unavailable', 'unknown'] }}"
+  - condition: time
+    after: "00:00:00"
+    before: "09:00:00"
+  - condition: state
+    entity_id: sun.sun
+    state: below_horizon
+  actions:
+  - variables:
+      was_on: "{{ is_state('light.camper_led_strip', 'on') }}"
+  - action: light.turn_on
+    target:
+      entity_id: light.camper_led_strip
+    data:
+      brightness: 255
+      rgb_color: [255, 200, 140]
+  - delay: "00:20:00"
+  - if:
+    - condition: template
+      value_template: "{{ not was_on }}"
+    then:
+    - action: light.turn_off
+      target:
+        entity_id: light.camper_led_strip
+      data:
+        transition: 5
+- id: jarvis_chat_typed
+  alias: Jarvis chat - typed question
+  description: When something is typed in the Home page "Talk to Jarvis" box, clear the box and ask Jarvis.
+  mode: queued
+  triggers:
+    - trigger: state
+      entity_id: input_text.jarvis_ask
+  conditions:
+    - condition: template
+      value_template: "{{ trigger.to_state.state | trim not in ['', 'unknown', 'unavailable'] }}"
+  actions:
+    - variables:
+        q: "{{ trigger.to_state.state | trim }}"
+    - action: input_text.set_value
+      target: { entity_id: input_text.jarvis_ask }
+      data: { value: "" }
+    - action: script.jarvis_chat
+      data:
+        text: "{{ q }}"
+

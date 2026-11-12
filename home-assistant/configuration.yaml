@@ -22,6 +22,9 @@ lovelace:
     # Home page indoor/outdoor temperature graph (2026-10-25)
     - url: /hacsfiles/mini-graph-card/mini-graph-card-bundle.js
       type: module
+    # Animated Weather Card + Sun Tracker (2026-11-07, alexsto1an/ha-ani-weather-card v1.2.0)
+    - url: /hacsfiles/ha-ani-weather-card/animated-weather-card.js?v=1.2.0
+      type: module
   dashboards:
     lovelace-camper:
       mode: yaml
@@ -41,6 +44,24 @@ lovelace:
       require_admin: false
 
 sensor:
+  # Underbelly heater run time (2026-11-09): counts time the plug actually draws power.
+  - platform: history_stats
+    name: Underbelly Heater Run Time Today
+    unique_id: underbelly_heater_run_time_today
+    entity_id: binary_sensor.underbelly_heater_heating
+    state: "on"
+    type: time
+    start: "{{ today_at() }}"
+    end: "{{ now() }}"
+  - platform: history_stats
+    name: Underbelly Heater Run Time Yesterday
+    unique_id: underbelly_heater_run_time_yesterday
+    entity_id: binary_sensor.underbelly_heater_heating
+    state: "on"
+    type: time
+    start: "{{ today_at() - timedelta(days=1) }}"
+    end: "{{ today_at() }}"
+
   # 2016 Toyota Sequoia (5.7 V8, tows the camper) OBD-II (2026-10-17): ELM327 mini (Bluetooth)
   # -> Torque Pro on Morris's Android phone -> uploads to /api/torque. Sensors appear as
   # "Sequoia <PID>" after the first drive. "email" is just the matching key typed into
@@ -149,6 +170,15 @@ input_boolean:
     icon: mdi:thermostat-auto
 
 input_number:
+  # Electric rate for the heater cost numbers (2026-11-09). Change it on the Climate page.
+  electricity_price:
+    name: Electric rate
+    icon: mdi:cash
+    min: 0
+    max: 1
+    step: 0.01
+    mode: box
+    unit_of_measurement: "$/kWh"
   # Thermostat schedule (Schedule tab): a Heat to and an A/C to for each period.
   # The schedule uses these exactly; A/C is only held at or above heat.
   camper_tsched_night_heat:
@@ -326,6 +356,15 @@ input_number:
     unit_of_measurement: °F
 
 input_text:
+  # "Talk to Jarvis" box on the Home page (2026-11-12): typed question -> automation jarvis_chat_typed
+  jarvis_ask:
+    name: Ask Jarvis
+    icon: mdi:chat-processing
+    max: 255
+  # Dehumidifier boost: what it was set to before the humid-air boost ("on|Auto|low"); empty = not boosted
+  dehumidifier_before_boost:
+    name: Dehumidifier Before Boost
+    max: 100
   # YouTube video ID the TV plays for the dog when everyone leaves
   camper_dog_tv_video:
     name: Dog TV YouTube Video ID
@@ -458,6 +497,12 @@ input_datetime:
 # kept firing by mistake. 30 s: camper_vision ignores all gestures for 4 s after
 # sending one, and 🤟 took 23 s to register on the first real try.
 timer:
+  # Underbelly heater "Run for 30 min / 1 h / 2 h" buttons (2026-11-09). While this runs,
+  # the 38/45 automation will not switch the heater off.
+  underbelly_heater_manual:
+    name: Underbelly Heater Run Timer
+    icon: mdi:timer-outline
+    restore: true
   camper_gesture_armed:
     name: "Gesture Armed (✌️)"
     icon: mdi:hand-peace
@@ -564,6 +609,63 @@ input_select:
 # automations keep using cover.awning.
 # ============================================
 template:
+  # Jarvis chat window (2026-11-12): last answers + conversation id, set by script.jarvis_chat
+  - triggers:
+      - trigger: event
+        event_type: jarvis_chat_reply
+    sensor:
+      - name: Jarvis Chat
+        unique_id: jarvis_chat
+        icon: mdi:robot-happy
+        state: "{{ trigger.event.data.answer[:250] }}"
+        attributes:
+          question: "{{ trigger.event.data.question }}"
+          answer: "{{ trigger.event.data.answer }}"
+          conversation_id: "{{ trigger.event.data.conversation_id }}"
+          history: >-
+            {{ ((this.attributes.history if this.attributes is defined and this.attributes.history is defined else []) + [[trigger.event.data.question, trigger.event.data.answer]])[-6:] }}
+  # Underbelly heater (2026-11-09): heating = plug drawing over 5 W; cost = kWh x rate.
+  - binary_sensor:
+      - name: Underbelly Heater Heating
+        unique_id: underbelly_heater_heating
+        icon: mdi:radiator
+        state: "{{ states('sensor.underbelly_heater_power') | float(0) > 5 }}"
+    sensor:
+      - name: Underbelly Heater Cost Today
+        unique_id: underbelly_heater_cost_today
+        unit_of_measurement: "$"
+        icon: mdi:cash
+        state: "{{ (states('sensor.underbelly_heater_energy_today') | float(0) * states('input_number.electricity_price') | float(0.14)) | round(2) }}"
+      - name: Underbelly Heater Cost Yesterday
+        unique_id: underbelly_heater_cost_yesterday
+        unit_of_measurement: "$"
+        icon: mdi:cash
+        state: "{{ (state_attr('sensor.underbelly_heater_energy_today','last_period') | float(0) * states('input_number.electricity_price') | float(0.14)) | round(2) }}"
+      - name: Underbelly Heater Cost This Month
+        unique_id: underbelly_heater_cost_month
+        unit_of_measurement: "$"
+        icon: mdi:cash
+        state: "{{ (states('sensor.underbelly_heater_energy_this_month') | float(0) * states('input_number.electricity_price') | float(0.14)) | round(2) }}"
+      - name: Camper Power Cost Today
+        unique_id: camper_power_cost_today
+        unit_of_measurement: "$"
+        icon: mdi:cash
+        state: "{{ (states('sensor.camper_power_used_today') | float(0) * states('input_number.electricity_price') | float(0.14)) | round(2) }}"
+      - name: Camper Power Cost Yesterday
+        unique_id: camper_power_cost_yesterday
+        unit_of_measurement: "$"
+        icon: mdi:cash
+        state: "{{ (state_attr('sensor.camper_power_used_today','last_period') | float(0) * states('input_number.electricity_price') | float(0.14)) | round(2) }}"
+      - name: Camper Power Cost This Month
+        unique_id: camper_power_cost_month
+        unit_of_measurement: "$"
+        icon: mdi:cash
+        state: "{{ (states('sensor.camper_power_used_this_month') | float(0) * states('input_number.electricity_price') | float(0.14)) | round(2) }}"
+      - name: Camper Power Cost Last Month
+        unique_id: camper_power_cost_last_month
+        unit_of_measurement: "$"
+        icon: mdi:cash
+        state: "{{ (state_attr('sensor.camper_power_used_this_month','last_period') | float(0) * states('input_number.electricity_price') | float(0.14)) | round(2) }}"
   # Weather page (2026-11-01): weather.get_forecasts only answers service calls, so
   # copy a trimmed forecast into attributes the page can read. Trimmed to keep the DB small.
   - triggers:
@@ -740,7 +842,7 @@ template:
   # Sequoia OBD box (2026-10-17): an ESP32 in the Sequoia talks to the ELM327 over Bluetooth
   # (instead of the Torque app) and POSTs JSON here - via Home Assistant Cloud, so it works
   # from the phone hotspot anywhere. Names match Torque's so sequoia.jinja / the gauges find them.
-  # Firmware: vehicle-obd/ in the repo (on the Pi: /config/esphome/sequoia_obd_fw/). Fields: speed mph, rpm, coolant °F, trans °F, fuel %, volts.
+  # Firmware: esphome/sequoia_obd_fw/. Fields: speed mph, rpm, coolant °F, trans °F, fuel %, volts.
   - triggers:
       - trigger: webhook
         webhook_id: !secret sequoia_webhook_id
@@ -1265,6 +1367,10 @@ zone:
 # SSH with its own key (/config/.ssh/id_ed25519) via ~/.local/bin/camper-spotify there.
 # Spotify Premium = no commercials.
 shell_command:
+  # Daisy's recall whistle (2026-11-07): plays ~/camper_voice/sounds/daisy_whistle.wav on the
+  # Jetson's Bluetooth speaker (the Furrion stereo). Mixes on top of music.
+  daisy_whistle: >-
+    ssh -i /config/.ssh/id_ed25519 -o UserKnownHostsFile=/config/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=5 morris@192.168.0.173 "XDG_RUNTIME_DIR=/run/user/1000 timeout 20 paplay camper_voice/sounds/{{ file | default('daisy_whistle') }}.wav"
   camper_spotify: >-
     ssh -i /config/.ssh/id_ed25519 -o UserKnownHostsFile=/config/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=5 morris@192.168.0.169 ".local/bin/camper-spotify {{ cmd }}"
 
@@ -1281,9 +1387,27 @@ command_line:
         "{{ states('sensor.pressure_trend') }}"
         {{ ((state_attr('weather.forecast_home', 'wind_speed') | float(0)) * (0.621 if state_attr('weather.forecast_home', 'wind_speed_unit') == 'km/h' else 1)) | round(0) }}
       value_template: "{{ value_json.rating }}"
-      json_attributes: [score, reasons, now_text, in_window, rows, tomorrow_majors, tomorrow_rating, phase, illumination, day_rating, moon_icon, trend, wind_mph]
+      json_attributes: [score, reasons, now_text, in_window, rows, tomorrow_majors, tomorrow_rating, phase, illumination, day_rating, moon_icon, trend, wind_mph, week, best_day, best_night, weather_ok, catfish, bass, trout]
       scan_interval: 300
       command_timeout: 30
+  - sensor:
+      name: Fishing Trout Streams
+      unique_id: fishing_trout_streams
+      icon: mdi:fish
+      command: python3 /config/fishing/fishing_trout.py
+      value_template: "{{ value_json.state }}"
+      json_attributes: [streams, ok, updated]
+      scan_interval: 1800
+      command_timeout: 60
+  - sensor:
+      name: Fishing State Tips
+      unique_id: fishing_state_tips
+      icon: mdi:fishbowl
+      command: python3 /config/fishing/fishing_dnr_tips.py
+      value_template: "{{ value_json.state }}"
+      json_attributes: [lake, month, bass, catfish, ok]
+      scan_interval: 86400
+      command_timeout: 40
   - sensor:
       name: Camper Spotify
       unique_id: camper_spotify_status
@@ -1294,3 +1418,27 @@ command_line:
       json_attributes: [title, artist, art, volume, playlist_uri, playlist]
       scan_interval: 10
       command_timeout: 15
+
+# Underbelly heater energy per day / month (2026-11-09), from the plug's own kWh counter.
+utility_meter:
+  underbelly_heater_energy_today:
+    name: Underbelly Heater Energy Today
+    unique_id: underbelly_heater_energy_today
+    source: sensor.underbelly_heater_summation_delivered
+    cycle: daily
+  underbelly_heater_energy_month:
+    name: Underbelly Heater Energy This Month
+    unique_id: underbelly_heater_energy_month
+    source: sensor.underbelly_heater_summation_delivered
+    cycle: monthly
+  # Whole camper (2026-11-10): Hughes Power Watchdog at the post, via the camper-ble-proxy ESP32.
+  camper_power_energy_today:
+    name: Camper Power Used Today
+    unique_id: camper_power_energy_today
+    source: sensor.camper_power_energy_total
+    cycle: daily
+  camper_power_energy_month:
+    name: Camper Power Used This Month
+    unique_id: camper_power_energy_month
+    source: sensor.camper_power_energy_total
+    cycle: monthly

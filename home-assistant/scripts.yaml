@@ -884,3 +884,183 @@ safe_drive_practice:
         message: "{{ 'Practice worked. Nadine was not told.' if wait.trigger is not none else 'In a real check, Nadine would be told now. This was practice, so she was not.' }}"
         data:
           tag: safe_drive
+
+dehumidifier_boost_on:
+  alias: "Dehumidifier: Boost (Max + High fan)"
+  icon: mdi:air-humidifier
+  description: Remembers the current mode and fan, then runs the dehumidifier on Max with the fan on High.
+  mode: single
+  sequence:
+    - condition: state
+      entity_id: binary_sensor.dehumidifier_tank_full
+      state: "off"
+    - condition: template
+      value_template: "{{ states('input_text.dehumidifier_before_boost') in ['', 'unknown', 'unavailable'] }}"
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.dehumidifier_before_boost
+      data:
+        value: >-
+          {{ states('humidifier.midea_dehumidifier') }}|{{ state_attr('humidifier.midea_dehumidifier', 'mode') or 'Auto' }}|{{ states('select.dehumidifier_fan_speed') }}
+    - action: humidifier.turn_on
+      target:
+        entity_id: humidifier.midea_dehumidifier
+    - delay: "00:00:03"
+    - action: humidifier.set_mode
+      target:
+        entity_id: humidifier.midea_dehumidifier
+      data:
+        mode: Max
+    - delay: "00:00:03"
+    - action: select.select_option
+      target:
+        entity_id: select.dehumidifier_fan_speed
+      data:
+        option: high
+
+dehumidifier_boost_off:
+  alias: "Dehumidifier: End Boost (back to before)"
+  icon: mdi:air-humidifier
+  description: Puts the dehumidifier back to the mode and fan it had before the boost.
+  mode: single
+  sequence:
+    - variables:
+        saved: "{{ states('input_text.dehumidifier_before_boost') }}"
+    - condition: template
+      value_template: "{{ saved not in ['', 'unknown', 'unavailable'] }}"
+    - variables:
+        was_on: "{{ saved.split('|')[0] }}"
+        was_mode: "{{ saved.split('|')[1] if saved.split('|')|length > 1 and saved.split('|')[1] in ['Auto','Cont.','Max'] else 'Auto' }}"
+        was_fan: "{{ saved.split('|')[2] if saved.split('|')|length > 2 and saved.split('|')[2] in ['low','high'] else 'low' }}"
+    - action: humidifier.set_mode
+      target:
+        entity_id: humidifier.midea_dehumidifier
+      data:
+        mode: "{{ was_mode }}"
+    - delay: "00:00:03"
+    - action: select.select_option
+      target:
+        entity_id: select.dehumidifier_fan_speed
+      data:
+        option: "{{ was_fan }}"
+    - if:
+        - condition: template
+          value_template: "{{ was_on == 'off' }}"
+      then:
+        - delay: "00:00:03"
+        - action: humidifier.turn_off
+          target:
+            entity_id: humidifier.midea_dehumidifier
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.dehumidifier_before_boost
+      data:
+        value: ""
+
+daisy_whistle:
+  alias: "Whistle for Daisy"
+  icon: mdi:whistle
+  description: >-
+    Plays one of Daisy's whistles on the stereo (the Furrion; set it to the outside zone
+    to hear it outside). come = the first one (tweet tweet tweeeet). rising, triple and
+    trill are other audible whistles. ultra17, ultra19 and ultra21 are near-ultrasonic (17, 19 and
+    21.5 kHz) - most adults can't hear them, dogs can. Added 2026-11-07.
+  mode: single
+  fields:
+    whistle:
+      description: "come, rising, triple, trill, ultra17, ultra19 or ultra21 (default come)"
+      example: come
+      selector:
+        select:
+          options: [come, rising, triple, trill, ultra17, ultra19, ultra21]
+  variables:
+    files:
+      come: daisy_whistle
+      rising: daisy_whistle_rising
+      triple: daisy_whistle_triple
+      trill: daisy_whistle_trill
+      ultra17: daisy_whistle_ultra17k
+      ultra19: daisy_whistle_ultra19k
+      ultra21: daisy_whistle_ultra21k
+    file: "{{ files.get((whistle | default('come') | string | lower | trim), 'daisy_whistle') }}"
+  sequence:
+    - action: shell_command.daisy_whistle
+      data:
+        file: "{{ file }}"
+underbelly_heater_run:
+  alias: Underbelly Heater Run For
+  icon: mdi:timer-outline
+  mode: restart
+  fields:
+    minutes:
+      name: Minutes
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 480
+  sequence:
+  - action: timer.start
+    target:
+      entity_id: timer.underbelly_heater_manual
+    data:
+      duration: "{{ (minutes | int(60)) * 60 }}"
+  - action: switch.turn_on
+    target:
+      entity_id: switch.under_camper_heater
+underbelly_heater_cancel:
+  alias: Underbelly Heater Cancel Run
+  icon: mdi:timer-off-outline
+  mode: restart
+  sequence:
+  - action: timer.cancel
+    target:
+      entity_id: timer.underbelly_heater_manual
+  - if:
+    - condition: not
+      conditions:
+      - condition: numeric_state
+        entity_id: sensor.under_camper_temperature
+        below: 38
+    then:
+    - action: switch.turn_off
+      target:
+        entity_id: switch.under_camper_heater
+
+# Typed chat with Jarvis (2026-11-12): ask the Camper Brain, show the answer on the
+# Home page (sensor.jarvis_chat) and say it on the stereo in Jarvis's voice (Kokoro af_heart).
+jarvis_chat:
+  alias: Jarvis Chat
+  icon: mdi:robot-happy
+  mode: queued
+  fields:
+    text:
+      description: What to ask Jarvis
+      example: What is the temperature inside?
+  sequence:
+    - action: conversation.process
+      data:
+        agent_id: conversation.camper_brain
+        text: "{{ text }}"
+        conversation_id: "{{ state_attr('sensor.jarvis_chat', 'conversation_id') or '' }}"
+      response_variable: r
+      continue_on_error: true
+    - variables:
+        answer: >-
+          {{ (r.response.speech.plain.speech if r is defined and r.response is defined else '')
+             or 'Sorry, I could not come up with an answer.' }}
+        spoken: "{{ answer | regex_replace('[*#_`]', '') }}"
+    - event: jarvis_chat_reply
+      event_data:
+        question: "{{ text }}"
+        answer: "{{ answer }}"
+        conversation_id: "{{ r.conversation_id if r is defined and r.conversation_id is defined else '' }}"
+    - action: tts.speak
+      target: { entity_id: tts.piper }
+      data:
+        media_player_entity_id: media_player.camper_stereo
+        message: "{{ spoken }}"
+        cache: false
+        options:
+          voice: af_heart
+
