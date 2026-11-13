@@ -34,7 +34,9 @@ def resample(x, src=KOKORO_RATE, dst=RATE):
     if src == dst or len(x) == 0:
         return x
     r = subprocess.run(["sox", "-q", "-t", "f32", "-r", str(src), "-c", "1", "-",
-                        "-t", "f32", "-r", str(dst), "-c", "1", "-", "rate", "-v"],
+                        "-t", "f32", "-r", str(dst), "-c", "1", "-", "rate", "-v",
+                        # 2026-11-12: trim hiss above 9 kHz; harsh Kokoro "s" sounds crackled over SBC Bluetooth
+                        "sinc", "-9000"],
                        input=x.tobytes(), capture_output=True, check=True)
     return np.frombuffer(r.stdout, dtype=np.float32)
 

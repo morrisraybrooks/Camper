@@ -1,0 +1,31 @@
+{
+    "window.autoDetectColorScheme": true,
+    "extensions.ignoreRecommendations": true,
+    "python.showInstallPythonTip": false,
+    "python.languageServer": "None",
+    "workbench.startupEditor": "none",
+    "claudeCode.useTerminal": true,
+    "window.zoomLevel": 1,
+    "editor.fontSize": 20,
+    "terminal.integrated.fontSize": 20,
+    "terminal.integrated.lineHeight": 1.15,
+    "claudeCode.preferredLocation": "panel",
+    "chat.disableAIFeatures": true,
+    "chat.commandCenter.enabled": false,
+    "github.copilot.enable": {
+        "*": false
+    },
+    "github.copilot.nextEditSuggestions.enabled": false,
+    "workbench.settings.showAISearchToggle": false,
+    "claudeCode.hideOnboarding": true,
+    "files.watcherExclude": {
+        "**/.*/**": true,
+        "**/node_modules/**": true,
+        "**/esphome-build/**": true,
+        "**/games/**": true,
+        "**/Downloads/**": true,
+        "**/snap/**": true
+    },
+    "workbench.tips.enabled": false,
+    "update.showReleaseNotes": false
+}
